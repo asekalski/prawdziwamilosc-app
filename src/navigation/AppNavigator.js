@@ -5,6 +5,8 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { AuthContext } from '../context/AuthContext';
 import { ThemeContext } from '../context/ThemeContext';
 import LoginScreen from '../screens/LoginScreen';
+import RegisterScreen from '../screens/RegisterScreen';
+import ActivationScreen from '../screens/ActivationScreen';
 import MembersScreen from '../screens/MembersScreen';
 import MatchesScreen from '../screens/MatchesScreen';
 import MessagesScreen from '../screens/MessagesScreen';
@@ -77,11 +79,32 @@ const AppNavigator = () => {
         return null; // Or a splash screen
     }
 
+    const linking = {
+        prefixes: ['prawdziwamilosc://', 'https://prawdziwamilosc.pl'],
+        config: {
+            screens: {
+                Activation: {
+                    path: 'activate',
+                    parse: {
+                        key: (key) => key,
+                        user: (user) => user,
+                    },
+                },
+                Login: 'login',
+                Register: 'register',
+            },
+        },
+    };
+
     return (
-        <NavigationContainer theme={theme}>
+        <NavigationContainer theme={theme} linking={linking}>
             <Stack.Navigator screenOptions={{ headerShown: false }}>
                 {userToken == null ? (
-                    <Stack.Screen name="Login" component={LoginScreen} />
+                    <>
+                        <Stack.Screen name="Login" component={LoginScreen} />
+                        <Stack.Screen name="Register" component={RegisterScreen} />
+                        <Stack.Screen name="Activation" component={ActivationScreen} />
+                    </>
                 ) : (
                     <>
                         <Stack.Screen name="Main" component={MainTabNavigator} options={{ headerShown: false }} />

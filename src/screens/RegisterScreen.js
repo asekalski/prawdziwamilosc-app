@@ -44,8 +44,8 @@ const RegisterScreen = () => {
             console.log('Registration successful:', response);
 
             Alert.alert(
-                'Sukces!',
-                'Konto zostało utworzone. Możesz się teraz zalogować.',
+                'Sprawdź email!',
+                'Wysłaliśmy Ci email z linkiem aktywacyjnym. Kliknij link w mailu aby aktywować swoje konto.',
                 [
                     {
                         text: 'OK',
