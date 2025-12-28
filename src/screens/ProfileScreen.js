@@ -77,13 +77,11 @@ const ProfileScreen = ({ route }) => {
                     <TouchableOpacity
                         style={styles.messageButton}
                         onPress={() => {
-                            const parentNav = navigation.getParent();
-                            if (parentNav) {
-                                parentNav.navigate('NewMessage', {
-                                    recipientId: member.id,
-                                    recipientName: member.name
-                                });
-                            }
+                            console.log('Navigate to NewMessage for user:', member.id, member.name);
+                            navigation.navigate('NewMessage', {
+                                recipientId: member.id,
+                                recipientName: member.name
+                            });
                         }}
                     >
                         <Ionicons name="chatbubble" size={20} color="#fff" style={styles.messageIcon} />

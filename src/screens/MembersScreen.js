@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { View, Text, FlatList, StyleSheet, TextInput, ActivityIndicator, Image, TouchableOpacity, Dimensions, Alert, SafeAreaView } from 'react-native';
-import { getMembers, getXProfileGroups, getMember } from '../api/members';
+import { getMembers, getXProfileGroups, getMember, toggleLike } from '../api/members';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '@react-navigation/native';
 import { Ionicons, FontAwesome5, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -18,6 +18,7 @@ const MembersScreen = () => {
     const [search, setSearch] = useState('');
     const [zodiacCache, setZodiacCache] = useState({}); // Cache zodiac data by user ID
     const [currentUserAvatar, setCurrentUserAvatar] = useState(null);
+    const [likedUsers, setLikedUsers] = useState({}); // Track liked users { userId: true/false }
     const navigation = useNavigation();
     const insets = useSafeAreaInsets();
     const { userInfo } = useContext(AuthContext);
@@ -134,6 +135,29 @@ const MembersScreen = () => {
         return age;
     };
 
+    const handleLike = async (userId) => {
+        try {
+            // Optimistic update
+            setLikedUsers(prev => ({ ...prev, [userId]: !prev[userId] }));
+
+            // Call API
+            const result = await toggleLike(userId);
+            console.log('Like toggled:', result);
+
+            // Update state based on API response
+            if (result.status === 'liked') {
+                setLikedUsers(prev => ({ ...prev, [userId]: true }));
+            } else {
+                setLikedUsers(prev => ({ ...prev, [userId]: false }));
+            }
+        } catch (error) {
+            console.error('Failed to toggle like:', error);
+            // Revert optimistic update on error
+            setLikedUsers(prev => ({ ...prev, [userId]: !prev[userId] }));
+            Alert.alert('Error', 'Failed to like user. Please try again.');
+        }
+    };
+
     const getZodiacIcon = (zodiacName) => {
         if (!zodiacName) return null;
 
@@ -202,8 +226,16 @@ const MembersScreen = () => {
                     <TouchableOpacity style={[styles.actionButton, { backgroundColor: '#fff' }]}>
                         <Ionicons name="close" size={30} color="#E74C3C" />
                     </TouchableOpacity>
-                    <TouchableOpacity style={[styles.actionButton, { backgroundColor: '#fff' }]}>
-                        <Ionicons name="heart" size={30} color="#2ECC71" />
+                    <TouchableOpacity
+                        style={[styles.actionButton, { backgroundColor: likedUsers[item.id] ? '#2ECC71' : '#fff' }]}
+                        onPress={() => handleLike(item.id)}
+                        activeOpacity={0.7}
+                    >
+                        <Ionicons
+                            name={likedUsers[item.id] ? "heart" : "heart-outline"}
+                            size={30}
+                            color={likedUsers[item.id] ? '#fff' : '#2ECC71'}
+                        />
                     </TouchableOpacity>
                     <TouchableOpacity style={[styles.actionButton, { backgroundColor: '#fff' }]}>
                         <Ionicons name="star" size={24} color="#3498DB" />

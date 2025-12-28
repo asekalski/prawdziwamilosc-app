@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ImageBackground, ScrollView, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ImageBackground, ScrollView, Alert, Image } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
+import * as ImagePicker from 'expo-image-picker';
 import { registerUser } from '../api/auth';
 
 const RegisterScreen = () => {
@@ -10,12 +11,70 @@ const RegisterScreen = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
+    const [profileImage, setProfileImage] = useState(null);
     const [loading, setLoading] = useState(false);
+
+    const pickImage = async () => {
+        // Poproś o uprawnienia
+        const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+        if (permissionResult.granted === false) {
+            Alert.alert('Błąd', 'Potrzebujemy dostępu do galerii aby dodać zdjęcie profilowe');
+            return;
+        }
+
+        const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsEditing: true,
+            aspect: [1, 1],
+            quality: 0.8,
+        });
+
+        if (!result.canceled && result.assets[0]) {
+            setProfileImage(result.assets[0]);
+        }
+    };
+
+    const takePhoto = async () => {
+        const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+
+        if (permissionResult.granted === false) {
+            Alert.alert('Błąd', 'Potrzebujemy dostępu do aparatu aby zrobić zdjęcie');
+            return;
+        }
+
+        const result = await ImagePicker.launchCameraAsync({
+            allowsEditing: true,
+            aspect: [1, 1],
+            quality: 0.8,
+        });
+
+        if (!result.canceled && result.assets[0]) {
+            setProfileImage(result.assets[0]);
+        }
+    };
+
+    const showImageOptions = () => {
+        Alert.alert(
+            'Dodaj zdjęcie profilowe',
+            'Wybierz źródło zdjęcia',
+            [
+                { text: 'Aparat', onPress: takePhoto },
+                { text: 'Galeria', onPress: pickImage },
+                { text: 'Anuluj', style: 'cancel' },
+            ]
+        );
+    };
 
     const handleRegister = async () => {
         // Walidacja
         if (!username || !email || !password || !confirmPassword) {
             Alert.alert('Błąd', 'Wypełnij wszystkie pola');
+            return;
+        }
+
+        if (!profileImage) {
+            Alert.alert('Błąd', 'Dodaj zdjęcie profilowe - to wymagane!');
             return;
         }
 
@@ -39,8 +98,8 @@ const RegisterScreen = () => {
         setLoading(true);
 
         try {
-            // Wywołaj WordPress API do rejestracji
-            const response = await registerUser(username, email, password);
+            // Wywołaj WordPress API do rejestracji z obrazem
+            const response = await registerUser(username, email, password, profileImage);
             console.log('Registration successful:', response);
 
             Alert.alert(
@@ -71,6 +130,25 @@ const RegisterScreen = () => {
                     <View style={styles.formContainer}>
                         <Text style={styles.title}>Stwórz Konto</Text>
                         <Text style={styles.subtitle}>Znajdź swoją prawdziwą miłość</Text>
+
+                        {/* Profile Image Picker */}
+                        <TouchableOpacity
+                            style={styles.imagePickerContainer}
+                            onPress={showImageOptions}
+                        >
+                            {profileImage ? (
+                                <Image
+                                    source={{ uri: profileImage.uri }}
+                                    style={styles.profileImage}
+                                />
+                            ) : (
+                                <View style={styles.imagePlaceholder}>
+                                    <Text style={styles.imagePlaceholderIcon}>📷</Text>
+                                    <Text style={styles.imagePlaceholderText}>Dodaj zdjęcie</Text>
+                                    <Text style={styles.imagePlaceholderSubtext}>(wymagane)</Text>
+                                </View>
+                            )}
+                        </TouchableOpacity>
 
                         <TextInput
                             placeholder="Nazwa użytkownika"
@@ -178,8 +256,43 @@ const styles = StyleSheet.create({
     subtitle: {
         fontSize: 16,
         color: '#666',
-        marginBottom: 30,
+        marginBottom: 20,
         textAlign: 'center',
+    },
+    imagePickerContainer: {
+        alignSelf: 'center',
+        marginBottom: 20,
+    },
+    profileImage: {
+        width: 120,
+        height: 120,
+        borderRadius: 60,
+        borderWidth: 3,
+        borderColor: '#FF6B9D',
+    },
+    imagePlaceholder: {
+        width: 120,
+        height: 120,
+        borderRadius: 60,
+        backgroundColor: '#f0f0f0',
+        borderWidth: 2,
+        borderColor: '#ddd',
+        borderStyle: 'dashed',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    imagePlaceholderIcon: {
+        fontSize: 32,
+        marginBottom: 5,
+    },
+    imagePlaceholderText: {
+        fontSize: 14,
+        color: '#666',
+        fontWeight: '600',
+    },
+    imagePlaceholderSubtext: {
+        fontSize: 12,
+        color: '#999',
     },
     input: {
         backgroundColor: '#fff',

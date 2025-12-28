@@ -1,32 +1,48 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, FlatList, StyleSheet, Image, TouchableOpacity, ActivityIndicator } from 'react-native';
+import React, { useState, useCallback } from 'react';
+import { View, Text, FlatList, StyleSheet, Image, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native';
 import { getMatches } from '../api/members';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const MatchesScreen = () => {
     const [matches, setMatches] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [refreshing, setRefreshing] = useState(false);
     const navigation = useNavigation();
     const insets = useSafeAreaInsets();
 
-    const fetchMatches = async () => {
-        setLoading(true);
+    const fetchMatches = async (isRefresh = false) => {
+        if (isRefresh) {
+            setRefreshing(true);
+        } else {
+            setLoading(true);
+        }
         try {
             // Fetch actual mutual matches from custom endpoint
             const data = await getMatches();
-            setMatches(data);
+            console.log('Matches fetched:', data);
+            console.log('Number of matches:', data?.length || 0);
+            setMatches(data || []);
         } catch (error) {
             console.error('Error fetching matches:', error);
         } finally {
             setLoading(false);
+            setRefreshing(false);
         }
     };
 
-    useEffect(() => {
-        fetchMatches();
-    }, []);
+    // Refresh matches when screen comes into focus
+    useFocusEffect(
+        useCallback(() => {
+            console.log('MatchesScreen focused - fetching matches...');
+            fetchMatches();
+        }, [])
+    );
+
+    const onRefresh = () => {
+        fetchMatches(true);
+    };
 
     const renderItem = ({ item }) => {
         // Use high-res avatar from API
@@ -86,6 +102,13 @@ const MatchesScreen = () => {
                     keyExtractor={item => item.id.toString()}
                     contentContainerStyle={styles.listContent}
                     showsVerticalScrollIndicator={false}
+                    refreshControl={
+                        <RefreshControl
+                            refreshing={refreshing}
+                            onRefresh={onRefresh}
+                            tintColor="#2ECC71"
+                        />
+                    }
                 />
             )}
         </View>

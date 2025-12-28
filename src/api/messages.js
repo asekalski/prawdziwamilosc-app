@@ -2,6 +2,7 @@ import client from './client';
 
 export const getThreads = async (page = 1, per_page = 20) => {
     try {
+        // Use Better Messages API - this is what the web portal uses
         console.log('Fetching threads from Better Messages API');
         const response = await client.get('/better-messages/v1/threads', {
             params: {
@@ -9,36 +10,19 @@ export const getThreads = async (page = 1, per_page = 20) => {
                 per_page,
             },
         });
-        console.log('Better Messages response:', response.data);
+        console.log('Better Messages response threads count:', response.data?.threads?.length || 0);
         return response.data;
     } catch (error) {
         console.error('Error fetching Better Messages threads:', error.response?.data || error.message);
-        // Fallback to standard BuddyPress if Better Messages fails
-        try {
-            console.log('Falling back to BuddyPress messages endpoint');
-            const fallbackResponse = await client.get('/buddypress/v1/messages', {
-                params: {
-                    page,
-                    per_page,
-                    box: 'inbox',
-                },
-            });
-            console.log('BuddyPress fallback response:', fallbackResponse.data);
-            return fallbackResponse.data;
-        } catch (fallbackError) {
-            console.error('Fallback also failed:', fallbackError.message);
-            throw error;
-        }
+        throw error;
     }
 };
 
 export const getThread = async (threadId) => {
     try {
-        // Try Better Messages first
         const response = await client.get(`/better-messages/v1/thread/${threadId}`);
         return response.data;
     } catch (error) {
-        // Fallback to BuddyPress
         try {
             const fallbackResponse = await client.get(`/buddypress/v1/messages/${threadId}`);
             return fallbackResponse.data;
@@ -49,81 +33,72 @@ export const getThread = async (threadId) => {
 }
 
 export const sendMessage = async (recipientId, subject, message) => {
+    console.log('sendMessage called with:', { recipientId, subject, message });
+
     try {
-        const response = await client.post('/buddypress/v1/messages', {
-            recipients: [recipientId],
-            subject,
-            message,
+        // Step 1: Get or create private thread with this user
+        console.log('Getting private thread with user:', recipientId);
+        const threadResponse = await client.post('/better-messages/v1/getPrivateThread', {
+            user_id: recipientId
         });
-        return response.data;
+        console.log('getPrivateThread response:', threadResponse.data);
+
+        const threadId = threadResponse.data?.thread_id || threadResponse.data?.id || threadResponse.data;
+
+        if (!threadId) {
+            throw new Error('Could not get thread ID');
+        }
+
+        // Step 2: Send message to this thread
+        console.log('Sending message to thread:', threadId);
+        const sendResponse = await client.post(`/better-messages/v1/thread/${threadId}/send`, {
+            message: message,
+            content: message,
+            tempId: Date.now().toString()
+        });
+        console.log('Send message response:', sendResponse.data);
+
+        return sendResponse.data;
     } catch (error) {
-        throw error;
+        console.error('Better Messages send error:', error.response?.status, error.response?.data || error.message);
+
+        // Fallback: try thread/new endpoint
+        try {
+            console.log('Trying /thread/new endpoint');
+            const newThreadResponse = await client.post('/better-messages/v1/thread/new', {
+                recipients: [recipientId],
+                message: message,
+                content: message,
+                subject: subject || 'Nowa wiadomość'
+            });
+            console.log('thread/new response:', newThreadResponse.data);
+            return newThreadResponse.data;
+        } catch (fallbackError) {
+            console.error('thread/new also failed:', fallbackError.response?.status, fallbackError.response?.data);
+            throw fallbackError;
+        }
     }
 }
 
 export const replyToThread = async (threadId, message, recipientId) => {
     try {
-        console.log(`Replying to thread ${threadId} via Better Messages`);
+        console.log(`Replying to thread ${threadId}`);
 
-        // Try alternative endpoints
-        try {
-            // Attempt 1: POST /thread/{id}/send with different params
-            // 500 error suggests we might be close but sending wrong data type
-            console.log('Attempting POST /send with "message" param');
-            const response = await client.post(`/better-messages/v1/thread/${threadId}/send`, {
-                message: message, // Try 'message' instead of 'content'
-                content: message, // Send both just in case
-                type: 'text',
-                receiver_id: recipientId // Try singular receiver_id
-            });
-            console.log('Better Messages POST /send success:', response.data);
-            return response.data;
-        } catch (e1) {
-            console.log('Attempt 1 (POST /send) failed:', e1.response?.status, e1.response?.data);
+        // Use BuddyPress to reply
+        const params = {
+            thread_id: threadId,
+            message,
+        };
 
-            try {
-                // Attempt 2: POST /thread/{id}/message
-                console.log('Attempting POST /message endpoint');
-                const response = await client.post(`/better-messages/v1/thread/${threadId}/message`, {
-                    content: message,
-                    type: 'text'
-                });
-                console.log('Better Messages POST /message success:', response.data);
-                return response.data;
-            } catch (e2) {
-                console.log('Attempt 2 (POST /message) failed:', e2.response?.status);
-                throw e2;
-            }
+        if (recipientId) {
+            params.recipients = [recipientId];
         }
+
+        const response = await client.post('/buddypress/v1/messages', params);
+        console.log('Reply success:', response.data);
+        return response.data;
     } catch (error) {
-        console.error('All Better Messages endpoints failed');
-
-        // Fallback to BuddyPress
-        try {
-            console.log('Falling back to BuddyPress reply with recipients');
-            // Check if we have a mapping or if threadId is actually a BP ID?
-            // If threadId is from BM, it might not match BP.
-
-            const params = {
-                thread_id: threadId,
-                message,
-            };
-
-            if (recipientId) {
-                params.recipients = [recipientId];
-            }
-
-            const response = await client.post('/buddypress/v1/messages', params);
-            console.log('BuddyPress fallback success:', response.data);
-
-            if (response.data[0] && response.data[0].id != threadId) {
-                console.warn('BuddyPress created a new thread instead of replying!', response.data[0].id);
-            }
-
-            return response.data;
-        } catch (fallbackError) {
-            console.error('BuddyPress fallback failed:', fallbackError.response?.data || fallbackError.message);
-            throw error;
-        }
+        console.error('Reply failed:', error.response?.data || error.message);
+        throw error;
     }
 }

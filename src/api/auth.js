@@ -12,16 +12,32 @@ export const loginUser = async (username, password) => {
     }
 };
 
-export const registerUser = async (username, email, password) => {
+export const registerUser = async (username, email, password, profileImage = null) => {
     try {
-        // BuddyPress signup endpoint - wysyła email aktywacyjny
-        const response = await client.post('/buddypress/v1/signup', {
-            user_login: username,
-            user_email: email,
-            password: password,
-            signup_field_data: [
-                { field_id: 1, value: username }  // Name field (wymagany przez BuddyPress)
-            ],
+        // Używamy FormData do wysłania zdjęcia
+        const formData = new FormData();
+        formData.append('user_login', username);
+        formData.append('user_email', email);
+        formData.append('password', password);
+
+        if (profileImage) {
+            // Dodaj zdjęcie do FormData
+            const filename = profileImage.uri.split('/').pop();
+            const match = /\.(\w+)$/.exec(filename);
+            const type = match ? `image/${match[1]}` : 'image/jpeg';
+
+            formData.append('avatar', {
+                uri: profileImage.uri,
+                name: filename,
+                type: type,
+            });
+        }
+
+        // Custom endpoint który obsługuje signup + avatar
+        const response = await client.post('/sk/v1/register-with-avatar', formData, {
+            headers: {
+                'Content-Type': 'multipart/form-data',
+            },
         });
 
         console.log('Registration response:', response.data);

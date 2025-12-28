@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useContext } from 'react';
-import { View, Text, FlatList, StyleSheet, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
-import { getThread, replyToThread, getThreads } from '../api/messages';
+import { View, Text, FlatList, StyleSheet, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator, Image } from 'react-native';
+import { getThreads, sendMessage } from '../api/messages';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
+import client from '../api/client';
 
 const ChatScreen = ({ route }) => {
     const { threadId, allMessages = [], users = {}, title } = route.params;
@@ -15,371 +16,350 @@ const ChatScreen = ({ route }) => {
     const [loading, setLoading] = useState(true);
     const [replyText, setReplyText] = useState('');
     const [sending, setSending] = useState(false);
-    const [polling, setPolling] = useState(true); // Smart polling control
     const flatListRef = useRef();
 
-    // Use passed title or find participant name
-    const participant = Object.values(users).find(u => u.user_id !== userInfo?.id);
+    // Current user ID - find by nicename/displayName in users list
+    const currentUser = Object.values(users).find(u =>
+        u.name?.toLowerCase() === userInfo?.nicename?.toLowerCase() ||
+        u.name?.toLowerCase() === userInfo?.displayName?.toLowerCase()
+    );
+    const currentUserId = currentUser?.user_id || currentUser?.id;
+    console.log('[ChatScreen] Found current user:', currentUser?.name, 'ID:', currentUserId);
+
+    // Find participant info (the OTHER user, not me)
+    const participant = Object.values(users).find(u => String(u.user_id) !== String(currentUserId));
     const participantName = title || participant?.name || 'Konwersacja';
+    const participantAvatar = participant?.avatar || null;
 
-    const fetchMessages = async () => {
+    // Load messages
+    useEffect(() => {
+        loadMessages();
+    }, [threadId]);
+
+    const loadMessages = async () => {
         try {
-            // Filter messages for this thread from the passed data
-            const threadMessages = allMessages.filter(msg => msg.thread_id === threadId);
+            // Filter messages for this thread from passed data
+            let threadMessages = allMessages.filter(msg =>
+                parseInt(msg.thread_id) === parseInt(threadId)
+            );
 
-            // Sort messages: Oldest first (Ascending) so they appear Top -> Bottom
+            // Sort messages chronologically
             threadMessages.sort((a, b) => {
                 const dateA = a.created_at || a.date_sent;
                 const dateB = b.created_at || b.date_sent;
                 return new Date(dateA) - new Date(dateB);
             });
 
-            console.log('Thread messages (sorted):', threadMessages.length);
             setMessages(threadMessages);
         } catch (error) {
-            console.error('Error filtering messages:', error);
+            console.error('Error loading messages:', error);
         } finally {
             setLoading(false);
         }
     };
 
+    // Polling for new messages
     useEffect(() => {
-        // Debug: Find the thread object to inspect IDs
-        const thread = route.params.thread || {}; // If passed
-        console.log('Current Thread ID:', threadId);
-        console.log('UserInfo:', JSON.stringify(userInfo, null, 2));
-
-        // Log resolved ID
-        const resolvedId = userInfo?.id || Object.values(users).find(u =>
-            u.name === userInfo?.displayName ||
-            u.name === userInfo?.nicename ||
-            u.slug === userInfo?.nicename
-        )?.user_id;
-        console.log('Resolved Current User ID:', resolvedId);
-
-        // We don't have the full thread object here usually, just ID.
-        // But MessagesScreen has it.
-
-        fetchMessages();
-    }, [threadId]);
-
-    // Smart Polling - poll co 10 sekund tylko gdy chat otwarty
-    useEffect(() => {
-        if (!polling) {
-            console.log('[Smart Poll] Polling disabled');
-            return;
-        }
-
-        console.log('[Smart Poll] Starting polling for thread:', threadId);
-
-        // Funkcja do pobierania wiadomości
         const fetchFreshMessages = async () => {
             try {
-                console.log('[Smart Poll] Fetching all threads to refresh messages...');
+                const threadsData = await getThreads(1, 50);
 
-                const threadsData = await getThreads(1, 50); // Get first 50 threads
-
-                console.log('[Smart Poll] Got threads response');
-
-                // Extract all messages from response
                 let allFreshMessages = [];
-
-                // Better Messages format: messages array directly in response
-                if (threadsData && Array.isArray(threadsData.messages)) {
-                    console.log('[Smart Poll] Found messages array in Better Messages format');
+                if (threadsData?.messages && Array.isArray(threadsData.messages)) {
                     allFreshMessages = threadsData.messages;
                 }
-                // BuddyPress format: array of threads with nested messages
-                else if (Array.isArray(threadsData)) {
-                    console.log('[Smart Poll] Using BuddyPress format');
-                    threadsData.forEach(thread => {
-                        if (thread.messages && Array.isArray(thread.messages)) {
-                            allFreshMessages = [...allFreshMessages, ...thread.messages];
-                        }
-                    });
-                } else if (threadsData && threadsData.threads) {
-                    console.log('[Smart Poll] Using alternative threads format');
-                    threadsData.threads.forEach(thread => {
-                        if (thread.messages && Array.isArray(thread.messages)) {
-                            allFreshMessages = [...allFreshMessages, ...thread.messages];
-                        }
-                    });
-                }
 
-                console.log('[Smart Poll] Total messages fetched:', allFreshMessages.length);
-
-                // Log all message IDs to see what we got
-                if (allFreshMessages.length > 0) {
-                    const messageIds = allFreshMessages.map(m => m.message_id).sort((a, b) => b - a);
-                    console.log('[Smart Poll] All message IDs (newest first):', messageIds.slice(0, 10));
-                }
-
-                // Filter messages for current thread
-                const currentThreadMessages = allFreshMessages.filter(msg => {
-                    const matches = msg.thread_id === threadId || msg.thread_id === parseInt(threadId);
-                    if (matches) {
-                        console.log('[Smart Poll] Message', msg.message_id, 'matches thread', threadId);
-                    }
-                    return matches;
-                });
+                const currentThreadMessages = allFreshMessages.filter(msg =>
+                    parseInt(msg.thread_id) === parseInt(threadId)
+                );
 
                 if (currentThreadMessages.length > 0) {
-                    // Sort chronologically
                     currentThreadMessages.sort((a, b) => {
                         const dateA = a.created_at || a.date_sent;
                         const dateB = b.created_at || b.date_sent;
                         return new Date(dateA) - new Date(dateB);
                     });
-
-                    console.log('[Smart Poll] Found', currentThreadMessages.length, 'messages for thread', threadId);
                     setMessages(currentThreadMessages);
-                } else {
-                    console.log('[Smart Poll] No messages found for thread', threadId);
                 }
             } catch (error) {
-                console.log('[Smart Poll] Error:', error.message);
+                console.log('Polling error:', error.message);
             }
         };
 
-        // Wywołaj natychmiast przy starcie
         fetchFreshMessages();
-
-        // Potem co 5 sekund (szybsze odświeżanie)
         const interval = setInterval(fetchFreshMessages, 5000);
-
-        return () => {
-            console.log('[Smart Poll] Stopping polling');
-            clearInterval(interval);
-        };
-    }, [threadId, polling]);
-
-    // Stop polling when screen unmounts
-    useEffect(() => {
-        return () => setPolling(false);
-    }, []);
-
-    // Resolve current user ID - MOVED HERE so it's available in handleSend
-    const currentUserId = userInfo?.id || Object.values(users).find(u =>
-        u.name === userInfo?.displayName ||
-        u.name === userInfo?.nicename ||
-        u.slug === userInfo?.nicename
-    )?.user_id;
+        return () => clearInterval(interval);
+    }, [threadId]);
 
     const handleSend = async () => {
         if (!replyText.trim()) return;
 
         const messageText = replyText.trim();
-        setReplyText(''); // Clear input immediately
+        setReplyText('');
+        setSending(true);
 
-        // OPTIMISTIC UPDATE - show message immediately
-        const optimisticMessage = {
-            id: `temp-${Date.now()}`,
-            message_id: `temp-${Date.now()}`,
+        // Optimistic update
+        const tempMessage = {
+            id: Date.now(),
+            message_id: Date.now(),
             thread_id: threadId,
             sender_id: currentUserId,
             message: messageText,
             date_sent: new Date().toISOString(),
-            created_at: Date.now(),
-            _optimistic: true // Mark as optimistic
+            isOptimistic: true
         };
+        setMessages(prev => [...prev, tempMessage]);
+        setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
 
-        // Add to messages array immediately
-        setMessages(prev => [...prev, optimisticMessage]);
-
-        // Scroll to bottom
-        setTimeout(() => flatListRef.current?.scrollToEnd(), 100);
-
-        setSending(true);
         try {
-            // Get recipient ID
-            const recipientId = participant?.user_id;
-            const response = await replyToThread(threadId, messageText, recipientId);
-
-            console.log('Send response:', response);
-
-            // Replace optimistic message with real one from server
-            const realMessage = {
-                id: response?.id || optimisticMessage.id,
-                message_id: response?.message_id || optimisticMessage.id,
-                thread_id: threadId,
-                sender_id: currentUserId,
+            // Send via Better Messages
+            const response = await client.post(`/better-messages/v1/thread/${threadId}/send`, {
                 message: messageText,
-                date_sent: response?.date_sent || new Date().toISOString(),
-                created_at: response?.created_at || Date.now()
-            };
-
-            setMessages(prev =>
-                prev.map(msg =>
-                    msg.id === optimisticMessage.id ? realMessage : msg
-                )
-            );
+                content: messageText,
+                tempId: Date.now().toString()
+            });
+            console.log('Message sent:', response.data);
         } catch (error) {
             console.error('Send error:', error);
-
-            // Remove optimistic message on error
-            setMessages(prev => prev.filter(msg => msg.id !== optimisticMessage.id));
-
-            const errorMessage = error.response?.data?.message || error.message || 'Unknown error';
-            alert(`Failed to send message: ${errorMessage}`);
+            setMessages(prev => prev.filter(m => m.id !== tempMessage.id));
+            setReplyText(messageText);
         } finally {
             setSending(false);
         }
     };
 
-    const renderItem = ({ item }) => {
-        // Use loose equality (==) because IDs might be string vs number
-        // Invert logic: If sender is NOT me, then it's me? No, wait.
-        // User says: "Co słychać" from Aneta (335) to Artur (1).
-        // App logged in as: AtenaPrzykl (335).
-        // So if sender_id == 335, it IS ME.
-        // But user says it appears on the WRONG side.
-        // If it appears on the right (green), it means isMe is true.
-        // If it appears on the left (white), it means isMe is false.
+    const renderMessage = ({ item }) => {
+        // Better Messages uses sender_id as string, compare as strings
+        const senderId = String(item.sender_id);
+        const myId = String(currentUserId);
+        const isMe = senderId === myId;
 
-        // Let's look at the screenshot.
-        // "Say Hello man" (from Atena) is on the LEFT (white).
-        // "o cześć anetka" (from Artur) is on the LEFT (white).
-        // Wait, ALL messages are on the left?
-
-        // Ah, the user said: "piszę 'Co słychać' z konta Anety do Artura a pojawia się po tej samej stronie co pisał artur".
-        // Meaning: My messages look like received messages.
-
-        // So isMe is FALSE for my own messages.
-        // currentUserId is 335. sender_id is 335.
-        // 335 == 335 should be true.
-
-        // Maybe currentUserId resolution failed?
-        // Or maybe the IDs are strings "335" vs number 335.
-
-        // NORMAL logic: My messages should be on the RIGHT (green)
-        const isMe = item.sender_id == currentUserId;
-
-        // DEBUG: ENABLE to see what's happening
-        console.log(`Message: "${item.message?.substring(0, 20)}..." | Sender: ${item.sender_id} | CurrentUser: ${currentUserId} | isMe: ${isMe}`);
+        console.log(`[ChatScreen] Message sender: ${senderId}, myId: ${myId}, isMe: ${isMe}`);
 
         const messageText = item.message || '';
-        const messageDate = item.created_at ? new Date(parseInt(item.created_at)).toLocaleTimeString() :
-            item.date_sent ? new Date(item.date_sent).toLocaleTimeString() : '';
+        // Strip HTML tags
+        const cleanMessage = messageText.replace(/<[^>]*>/g, '').trim();
+
+        const messageDate = item.created_at
+            ? new Date(parseInt(item.created_at)).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })
+            : item.date_sent
+                ? new Date(item.date_sent).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })
+                : '';
 
         return (
-            <View style={[styles.messageItem, {
-                alignSelf: isMe ? 'flex-end' : 'flex-start',
-                backgroundColor: isMe ? '#2ECC71' : '#fff',
-            }]}>
-                <Text style={{ color: isMe ? '#fff' : '#000' }}>{messageText}</Text>
-                <Text style={[styles.date, { color: isMe ? '#eee' : '#666' }]}>
+            <View style={[styles.messageBubble, isMe ? styles.myMessage : styles.theirMessage]}>
+                <Text style={[styles.messageText, isMe ? styles.myMessageText : styles.theirMessageText]}>
+                    {cleanMessage}
+                </Text>
+                <Text style={[styles.messageTime, isMe ? styles.myMessageTime : styles.theirMessageTime]}>
                     {messageDate}
                 </Text>
             </View>
         );
     };
 
-    if (loading) return <ActivityIndicator style={styles.center} />;
+    if (loading) {
+        return (
+            <View style={[styles.container, { paddingTop: insets.top }]}>
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color="#2ECC71" />
+                </View>
+            </View>
+        );
+    }
 
     return (
-        <View style={[styles.container, { paddingTop: insets.top, backgroundColor: '#F3F3E9' }]}>
+        <KeyboardAvoidingView
+            style={[styles.container, { paddingTop: insets.top }]}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+        >
             {/* Header */}
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                    <Ionicons name="arrow-back" size={24} color="#000" />
+                    <Ionicons name="arrow-back" size={24} color="#fff" />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>{participantName}</Text>
-                <View style={{ width: 40 }} />
+                {participantAvatar && (
+                    <Image source={{ uri: participantAvatar }} style={styles.headerAvatar} />
+                )}
+                <View style={styles.headerInfo}>
+                    <Text style={styles.headerTitle}>{participantName}</Text>
+                    <Text style={styles.headerSubtitle}>Online</Text>
+                </View>
             </View>
 
-            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.chatContainer}>
+            {/* Messages */}
+            {messages.length === 0 ? (
+                <View style={styles.emptyContainer}>
+                    <Ionicons name="chatbubbles-outline" size={64} color="#555" />
+                    <Text style={styles.emptyText}>Brak wiadomości</Text>
+                    <Text style={styles.emptySubtext}>Rozpocznij konwersację</Text>
+                </View>
+            ) : (
                 <FlatList
                     ref={flatListRef}
                     data={messages}
-                    renderItem={renderItem}
-                    keyExtractor={item => (item.message_id || item.id)?.toString() || Math.random().toString()}
-                    onContentSizeChange={() => flatListRef.current?.scrollToEnd()}
+                    renderItem={renderMessage}
+                    keyExtractor={item => (item.message_id || item.id)?.toString()}
                     contentContainerStyle={styles.messagesList}
+                    onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+                    showsVerticalScrollIndicator={false}
                 />
-                <View style={styles.inputContainer}>
-                    <TextInput
-                        style={styles.input}
-                        value={replyText}
-                        onChangeText={setReplyText}
-                        placeholder="Type a message..."
-                        placeholderTextColor="#999"
-                    />
-                    <TouchableOpacity onPress={handleSend} disabled={sending} style={styles.sendButton}>
-                        <Text style={styles.sendButtonText}>Send</Text>
-                    </TouchableOpacity>
-                </View>
-            </KeyboardAvoidingView>
-        </View>
+            )}
+
+            {/* Input */}
+            <View style={[styles.inputContainer, { paddingBottom: insets.bottom + 10 }]}>
+                <TextInput
+                    style={styles.input}
+                    placeholder="Napisz wiadomość..."
+                    placeholderTextColor="#888"
+                    value={replyText}
+                    onChangeText={setReplyText}
+                    multiline
+                    maxLength={1000}
+                />
+                <TouchableOpacity
+                    style={[styles.sendButton, (!replyText.trim() || sending) && styles.sendButtonDisabled]}
+                    onPress={handleSend}
+                    disabled={!replyText.trim() || sending}
+                >
+                    {sending ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                        <Ionicons name="send" size={20} color="#fff" />
+                    )}
+                </TouchableOpacity>
+            </View>
+        </KeyboardAvoidingView>
     );
 };
 
 const styles = StyleSheet.create({
-    container: { flex: 1 },
+    container: { flex: 1, backgroundColor: '#1C1C1E' },
     header: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        backgroundColor: '#fff',
+        padding: 15,
+        backgroundColor: '#2C2C2E',
         borderBottomWidth: 1,
-        borderBottomColor: '#E0E0E0',
+        borderBottomColor: '#3A3A3C',
     },
     backButton: {
+        marginRight: 12,
+        padding: 4,
+    },
+    headerAvatar: {
         width: 40,
         height: 40,
+        borderRadius: 20,
+        marginRight: 12,
+    },
+    headerInfo: { flex: 1 },
+    headerTitle: {
+        fontSize: 17,
+        fontWeight: '600',
+        color: '#fff',
+    },
+    headerSubtitle: {
+        fontSize: 13,
+        color: '#8E8E93',
+        marginTop: 2,
+    },
+    loadingContainer: {
+        flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
     },
-    headerTitle: {
+    emptyContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 40,
+    },
+    emptyText: {
         fontSize: 18,
-        fontWeight: 'bold',
-        color: '#000',
+        fontWeight: '600',
+        color: '#fff',
+        marginTop: 16,
     },
-    chatContainer: { flex: 1 },
-    messagesList: { padding: 10 },
-    center: { flex: 1, justifyContent: 'center' },
-    messageItem: {
+    emptySubtext: {
+        fontSize: 14,
+        color: '#8E8E93',
+        marginTop: 8,
+        textAlign: 'center',
+    },
+    messagesList: {
+        padding: 15,
+        paddingBottom: 10,
+    },
+    messageBubble: {
+        maxWidth: '75%',
         padding: 12,
-        margin: 5,
-        borderRadius: 16,
-        maxWidth: '80%',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.1,
-        shadowRadius: 2,
-        elevation: 2,
+        borderRadius: 18,
+        marginBottom: 8,
     },
-    date: { fontSize: 10, marginTop: 5, alignSelf: 'flex-end' },
+    myMessage: {
+        alignSelf: 'flex-end',
+        backgroundColor: '#2ECC71',
+        borderBottomRightRadius: 4,
+    },
+    theirMessage: {
+        alignSelf: 'flex-start',
+        backgroundColor: '#3A3A3C',
+        borderBottomLeftRadius: 4,
+    },
+    messageText: {
+        fontSize: 16,
+        lineHeight: 20,
+    },
+    myMessageText: {
+        color: '#fff',
+    },
+    theirMessageText: {
+        color: '#fff',
+    },
+    messageTime: {
+        fontSize: 11,
+        marginTop: 4,
+    },
+    myMessageTime: {
+        color: 'rgba(255,255,255,0.7)',
+        textAlign: 'right',
+    },
+    theirMessageTime: {
+        color: '#8E8E93',
+    },
     inputContainer: {
         flexDirection: 'row',
+        alignItems: 'flex-end',
         padding: 12,
-        backgroundColor: '#fff',
+        paddingTop: 10,
+        backgroundColor: '#2C2C2E',
         borderTopWidth: 1,
-        borderTopColor: '#E0E0E0',
-        alignItems: 'center'
+        borderTopColor: '#3A3A3C',
     },
     input: {
         flex: 1,
-        borderWidth: 1,
-        borderColor: '#E0E0E0',
+        backgroundColor: '#3A3A3C',
         borderRadius: 20,
-        paddingHorizontal: 15,
+        paddingHorizontal: 16,
         paddingVertical: 10,
+        paddingTop: 10,
+        fontSize: 16,
+        color: '#fff',
+        maxHeight: 100,
         marginRight: 10,
-        backgroundColor: '#F9F9F9',
-        color: '#000',
     },
     sendButton: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
         backgroundColor: '#2ECC71',
-        paddingHorizontal: 20,
-        paddingVertical: 10,
-        borderRadius: 20,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
-    sendButtonText: {
-        color: '#fff',
-        fontWeight: 'bold',
-        fontSize: 16,
+    sendButtonDisabled: {
+        backgroundColor: '#555',
     },
 });
 

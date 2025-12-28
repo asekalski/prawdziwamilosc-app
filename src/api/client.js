@@ -26,9 +26,10 @@ client.interceptors.response.use(
   async (error) => {
     console.log('API Error:', error.config?.url, error.response?.status, error.response?.data);
 
-    // If token expired, clear it and force re-login
-    if (error.response?.status === 403 && error.response?.data?.code === 'jwt_auth_invalid_token') {
-      console.log('Token expired! Clearing storage...');
+    // If token expired or user deleted, clear storage and force re-login
+    if (error.response?.status === 401 ||
+      (error.response?.status === 403 && error.response?.data?.code === 'jwt_auth_invalid_token')) {
+      console.log('Token invalid! Clearing storage...');
       await AsyncStorage.removeItem('userToken');
       await AsyncStorage.removeItem('userInfo');
       // The app will automatically redirect to login screen

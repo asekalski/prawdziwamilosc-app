@@ -1,7 +1,14 @@
 import client from './client';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export const getMembers = async (page = 1, per_page = 20, search = '') => {
     try {
+        // Sprawdź czy user jest zalogowany
+        const token = await AsyncStorage.getItem('userToken');
+        if (!token) {
+            throw new Error('Nie jesteś zalogowany');
+        }
+
         const response = await client.get('/buddypress/v1/members', {
             params: {
                 page,
@@ -53,3 +60,14 @@ export const getMatches = async () => {
     }
 };
 
+export const toggleLike = async (userId) => {
+    try {
+        const response = await client.post('/sk/v1/like', {
+            user_id: userId
+        });
+
+        return response.data;
+    } catch (error) {
+        throw error;
+    }
+};
