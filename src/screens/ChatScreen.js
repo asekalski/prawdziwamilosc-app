@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useContext } from 'react';
 import { View, Text, FlatList, StyleSheet, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
-import { getThread, replyToThread } from '../api/messages';
+import { getThread, replyToThread, getThreads } from '../api/messages';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,6 +15,7 @@ const ChatScreen = ({ route }) => {
     const [loading, setLoading] = useState(true);
     const [replyText, setReplyText] = useState('');
     const [sending, setSending] = useState(false);
+    const [polling, setPolling] = useState(true); // Smart polling control
     const flatListRef = useRef();
 
     // Use passed title or find participant name
@@ -62,6 +63,101 @@ const ChatScreen = ({ route }) => {
         fetchMessages();
     }, [threadId]);
 
+    // Smart Polling - poll co 10 sekund tylko gdy chat otwarty
+    useEffect(() => {
+        if (!polling) {
+            console.log('[Smart Poll] Polling disabled');
+            return;
+        }
+
+        console.log('[Smart Poll] Starting polling for thread:', threadId);
+
+        // Funkcja do pobierania wiadomości
+        const fetchFreshMessages = async () => {
+            try {
+                console.log('[Smart Poll] Fetching all threads to refresh messages...');
+
+                const threadsData = await getThreads(1, 50); // Get first 50 threads
+
+                console.log('[Smart Poll] Got threads response');
+
+                // Extract all messages from response
+                let allFreshMessages = [];
+
+                // Better Messages format: messages array directly in response
+                if (threadsData && Array.isArray(threadsData.messages)) {
+                    console.log('[Smart Poll] Found messages array in Better Messages format');
+                    allFreshMessages = threadsData.messages;
+                }
+                // BuddyPress format: array of threads with nested messages
+                else if (Array.isArray(threadsData)) {
+                    console.log('[Smart Poll] Using BuddyPress format');
+                    threadsData.forEach(thread => {
+                        if (thread.messages && Array.isArray(thread.messages)) {
+                            allFreshMessages = [...allFreshMessages, ...thread.messages];
+                        }
+                    });
+                } else if (threadsData && threadsData.threads) {
+                    console.log('[Smart Poll] Using alternative threads format');
+                    threadsData.threads.forEach(thread => {
+                        if (thread.messages && Array.isArray(thread.messages)) {
+                            allFreshMessages = [...allFreshMessages, ...thread.messages];
+                        }
+                    });
+                }
+
+                console.log('[Smart Poll] Total messages fetched:', allFreshMessages.length);
+
+                // Log all message IDs to see what we got
+                if (allFreshMessages.length > 0) {
+                    const messageIds = allFreshMessages.map(m => m.message_id).sort((a, b) => b - a);
+                    console.log('[Smart Poll] All message IDs (newest first):', messageIds.slice(0, 10));
+                }
+
+                // Filter messages for current thread
+                const currentThreadMessages = allFreshMessages.filter(msg => {
+                    const matches = msg.thread_id === threadId || msg.thread_id === parseInt(threadId);
+                    if (matches) {
+                        console.log('[Smart Poll] Message', msg.message_id, 'matches thread', threadId);
+                    }
+                    return matches;
+                });
+
+                if (currentThreadMessages.length > 0) {
+                    // Sort chronologically
+                    currentThreadMessages.sort((a, b) => {
+                        const dateA = a.created_at || a.date_sent;
+                        const dateB = b.created_at || b.date_sent;
+                        return new Date(dateA) - new Date(dateB);
+                    });
+
+                    console.log('[Smart Poll] Found', currentThreadMessages.length, 'messages for thread', threadId);
+                    setMessages(currentThreadMessages);
+                } else {
+                    console.log('[Smart Poll] No messages found for thread', threadId);
+                }
+            } catch (error) {
+                console.log('[Smart Poll] Error:', error.message);
+            }
+        };
+
+        // Wywołaj natychmiast przy starcie
+        fetchFreshMessages();
+
+        // Potem co 5 sekund (szybsze odświeżanie)
+        const interval = setInterval(fetchFreshMessages, 5000);
+
+        return () => {
+            console.log('[Smart Poll] Stopping polling');
+            clearInterval(interval);
+        };
+    }, [threadId, polling]);
+
+    // Stop polling when screen unmounts
+    useEffect(() => {
+        return () => setPolling(false);
+    }, []);
+
     // Resolve current user ID - MOVED HERE so it's available in handleSend
     const currentUserId = userInfo?.id || Object.values(users).find(u =>
         u.name === userInfo?.displayName ||
@@ -71,34 +167,58 @@ const ChatScreen = ({ route }) => {
 
     const handleSend = async () => {
         if (!replyText.trim()) return;
+
+        const messageText = replyText.trim();
+        setReplyText(''); // Clear input immediately
+
+        // OPTIMISTIC UPDATE - show message immediately
+        const optimisticMessage = {
+            id: `temp-${Date.now()}`,
+            message_id: `temp-${Date.now()}`,
+            thread_id: threadId,
+            sender_id: currentUserId,
+            message: messageText,
+            date_sent: new Date().toISOString(),
+            created_at: Date.now(),
+            _optimistic: true // Mark as optimistic
+        };
+
+        // Add to messages array immediately
+        setMessages(prev => [...prev, optimisticMessage]);
+
+        // Scroll to bottom
+        setTimeout(() => flatListRef.current?.scrollToEnd(), 100);
+
         setSending(true);
         try {
             // Get recipient ID
             const recipientId = participant?.user_id;
-            const response = await replyToThread(threadId, replyText, recipientId);
-            setReplyText('');
+            const response = await replyToThread(threadId, messageText, recipientId);
 
-            // Add the actual sent message to the list
-            // If response contains the new message, use it. Otherwise use optimistic.
-            // Better Messages/BuddyPress usually return the new message or thread info
             console.log('Send response:', response);
 
-            const newMessage = {
-                id: response?.id || Math.random(),
-                message_id: response?.message_id || Math.random(),
+            // Replace optimistic message with real one from server
+            const realMessage = {
+                id: response?.id || optimisticMessage.id,
+                message_id: response?.message_id || optimisticMessage.id,
                 thread_id: threadId,
-                sender_id: currentUserId, // FIX: Use currentUserId instead of userInfo?.id
-                message: replyText,
-                date_sent: new Date().toISOString(),
-                created_at: Date.now()
+                sender_id: currentUserId,
+                message: messageText,
+                date_sent: response?.date_sent || new Date().toISOString(),
+                created_at: response?.created_at || Date.now()
             };
 
-            setMessages(prev => [...prev, newMessage]);
-
-            // Do NOT call fetchMessages() here because it re-reads stale route.params
-            // and overwrites our new message.
+            setMessages(prev =>
+                prev.map(msg =>
+                    msg.id === optimisticMessage.id ? realMessage : msg
+                )
+            );
         } catch (error) {
             console.error('Send error:', error);
+
+            // Remove optimistic message on error
+            setMessages(prev => prev.filter(msg => msg.id !== optimisticMessage.id));
+
             const errorMessage = error.response?.data?.message || error.message || 'Unknown error';
             alert(`Failed to send message: ${errorMessage}`);
         } finally {
