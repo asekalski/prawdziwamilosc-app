@@ -27,6 +27,7 @@ const MembersScreen = () => {
     const [currentUserAvatar, setCurrentUserAvatar] = useState(null);
     const [likedUsers, setLikedUsers] = useState({}); // Track liked users { userId: true/false }
     const [activeTab, setActiveTab] = useState('search'); // Tab navigation state
+    const [hasMore, setHasMore] = useState(true); // Track if there are more results to load
     const navigation = useNavigation();
     const insets = useSafeAreaInsets();
     const { userInfo } = useContext(AuthContext);
@@ -94,6 +95,13 @@ const MembersScreen = () => {
                 }
             });
 
+            // Check if we got fewer results than requested (no more pages)
+            if (data.length < 20) {
+                setHasMore(false);
+            } else {
+                setHasMore(true);
+            }
+
             if (pageNum === 1) {
                 setMembers(data);
             } else {
@@ -141,6 +149,7 @@ const MembersScreen = () => {
     // Effect for tab changes
     useEffect(() => {
         setPage(1);
+        setHasMore(true); // Reset hasMore when tab changes
         fetchTabData(activeTab, search);
     }, [activeTab]);
 
@@ -148,6 +157,7 @@ const MembersScreen = () => {
     useEffect(() => {
         if (activeTab === 'search') {
             setPage(1);
+            setHasMore(true); // Reset hasMore when search changes
             fetchTabData(activeTab, search);
         }
     }, [search]);
@@ -156,6 +166,7 @@ const MembersScreen = () => {
         // Only allow pagination for 'search' tab
         if (activeTab !== 'search') return;
         if (loading) return;
+        if (!hasMore) return; // Stop if no more results
 
         const nextPage = page + 1;
         setPage(nextPage);
