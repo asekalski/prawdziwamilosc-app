@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useContext } from 'react';
-import { View, Text, StyleSheet, Image, ActivityIndicator, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Image, ActivityIndicator, ScrollView, Alert } from 'react-native';
 import { getMember, getXProfileGroups } from '../api/members';
+import { getThreads } from '../api/messages';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme, useNavigation } from '@react-navigation/native';
 import { TouchableOpacity } from 'react-native';
@@ -11,6 +12,7 @@ const ProfileScreen = ({ route }) => {
     const { userInfo, logout } = useContext(AuthContext);
     const [member, setMember] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [messageLoading, setMessageLoading] = useState(false);
     const { colors } = useTheme();
 
     const userId = route?.params?.userId || userInfo?.id || 'me';
@@ -44,6 +46,74 @@ const ProfileScreen = ({ route }) => {
     const navigation = useNavigation();
     const insets = useSafeAreaInsets();
 
+    // Navigate to message screen - check for existing conversation first
+    const handleMessagePress = async () => {
+        if (!member) return;
+
+        setMessageLoading(true);
+        try {
+            // Fetch all threads to check for existing conversation
+            const data = await getThreads(1, 50);
+            const threadsArray = data.threads || data || [];
+            const messagesArray = data.messages || [];
+            const usersArray = data.users || [];
+
+            // Convert users array to object
+            const usersMap = {};
+            usersArray.forEach(user => {
+                usersMap[user.user_id] = user;
+            });
+
+            // Find existing thread with this user
+            let existingThread = null;
+            for (const thread of threadsArray) {
+                const participants = thread.participants || [];
+                for (const p of participants) {
+                    const participantId = p.user_id || p;
+                    if (parseInt(participantId) === parseInt(member.id)) {
+                        existingThread = thread;
+                        break;
+                    }
+                }
+                if (existingThread) break;
+            }
+
+            if (existingThread) {
+                // Navigate to existing ChatScreen
+                const participantNames = existingThread.participants
+                    ?.map(p => {
+                        const pId = p.user_id || p;
+                        if (userInfo?.id && pId == userInfo.id) return null;
+                        return usersMap[pId]?.name || null;
+                    })
+                    .filter(Boolean)
+                    .join(', ') || member.name;
+
+                navigation.navigate('Chat', {
+                    threadId: existingThread.thread_id,
+                    allMessages: messagesArray,
+                    users: usersMap,
+                    title: participantNames
+                });
+            } else {
+                // No existing conversation - open NewMessageScreen
+                navigation.navigate('NewMessage', {
+                    recipientId: member.id,
+                    recipientName: member.name
+                });
+            }
+        } catch (error) {
+            console.error('Error checking conversations:', error);
+            // Fallback to NewMessageScreen on error
+            navigation.navigate('NewMessage', {
+                recipientId: member.id,
+                recipientName: member.name
+            });
+        } finally {
+            setMessageLoading(false);
+        }
+    };
+
     if (loading) {
         return <View style={styles.center}><ActivityIndicator /></View>;
     }
@@ -75,16 +145,15 @@ const ProfileScreen = ({ route }) => {
 
                 {userId !== 'me' && userId !== userInfo?.id && (
                     <TouchableOpacity
-                        style={styles.messageButton}
-                        onPress={() => {
-                            console.log('Navigate to NewMessage for user:', member.id, member.name);
-                            navigation.navigate('NewMessage', {
-                                recipientId: member.id,
-                                recipientName: member.name
-                            });
-                        }}
+                        style={[styles.messageButton, messageLoading && styles.messageButtonDisabled]}
+                        onPress={handleMessagePress}
+                        disabled={messageLoading}
                     >
-                        <Ionicons name="chatbubble" size={20} color="#fff" style={styles.messageIcon} />
+                        {messageLoading ? (
+                            <ActivityIndicator size="small" color="#fff" style={styles.messageIcon} />
+                        ) : (
+                            <Ionicons name="chatbubble" size={20} color="#fff" style={styles.messageIcon} />
+                        )}
                         <Text style={styles.messageButtonText}>Wyślij Wiadomość</Text>
                     </TouchableOpacity>
                 )}
@@ -156,6 +225,7 @@ const styles = StyleSheet.create({
         elevation: 3,
     },
     messageIcon: { marginRight: 8 },
+    messageButtonDisabled: { opacity: 0.7 },
     messageButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
     contentContainer: { padding: 20 },
     group: { marginBottom: 25, backgroundColor: '#fff', borderRadius: 15, padding: 20, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 3.84, elevation: 2 },
