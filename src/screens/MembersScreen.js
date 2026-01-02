@@ -42,7 +42,7 @@ const MembersScreen = () => {
                 const userData = await getMember('me');
                 console.log('Current user data:', userData);
 
-                const avatarUrl = userData.avatar_urls?.full || userData.avatar_urls?.thumb;
+                const avatarUrl = userData.hires_avatar?.large || userData.hires_avatar?.full || userData.avatar_urls?.full || userData.avatar_urls?.thumb;
                 console.log('Avatar URL:', avatarUrl);
 
                 setCurrentUserAvatar(avatarUrl);

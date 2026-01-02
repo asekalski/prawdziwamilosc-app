@@ -24,8 +24,8 @@ const NewMessageScreen = ({ route, navigation }) => {
             try {
                 // Get recipient avatar
                 const memberData = await getMember(recipientId);
-                if (memberData?.avatar_urls?.full) {
-                    setRecipientAvatar(memberData.avatar_urls.full);
+                if (memberData?.hires_avatar?.large || memberData?.hires_avatar?.full || memberData?.avatar_urls?.full) {
+                    setRecipientAvatar(memberData.hires_avatar?.large || memberData.hires_avatar?.full || memberData.avatar_urls.full);
                 }
 
                 // Check for existing thread with this recipient

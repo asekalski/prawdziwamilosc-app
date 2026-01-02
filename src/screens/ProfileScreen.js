@@ -139,7 +139,7 @@ const ProfileScreen = ({ route }) => {
             </View>
 
             <View style={styles.header}>
-                <Image source={{ uri: member.avatar_urls?.full }} style={styles.avatar} />
+                <Image source={{ uri: member.hires_avatar?.large || member.hires_avatar?.full || member.avatar_urls?.full }} style={styles.avatar} />
                 <Text style={styles.name}>{member.name}</Text>
                 <Text style={styles.mention}>@{member.mention_name}</Text>
 
