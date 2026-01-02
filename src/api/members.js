@@ -60,6 +60,24 @@ export const getMatches = async () => {
     }
 };
 
+export const getLikedUsers = async () => {
+    try {
+        const response = await client.get('/sk/v1/liked');
+        return response.data;
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const getLikesMeUsers = async () => {
+    try {
+        const response = await client.get('/sk/v1/likes-me');
+        return response.data;
+    } catch (error) {
+        throw error;
+    }
+};
+
 export const toggleLike = async (userId) => {
     try {
         const response = await client.post('/sk/v1/like', {

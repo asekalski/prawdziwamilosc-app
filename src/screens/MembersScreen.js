@@ -1,11 +1,18 @@
 import React, { useState, useEffect, useContext } from 'react';
-import { View, Text, FlatList, StyleSheet, TextInput, ActivityIndicator, Image, TouchableOpacity, Dimensions, Alert, SafeAreaView } from 'react-native';
-import { getMembers, getXProfileGroups, getMember, toggleLike } from '../api/members';
+import { View, Text, FlatList, StyleSheet, TextInput, ActivityIndicator, Image, TouchableOpacity, Dimensions, Alert, SafeAreaView, ScrollView } from 'react-native';
+import { getMembers, getXProfileGroups, getMember, toggleLike, getLikedUsers, getLikesMeUsers, getMatches } from '../api/members';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '@react-navigation/native';
 import { Ionicons, FontAwesome5, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AuthContext } from '../context/AuthContext';
+
+const TABS = [
+    { id: 'search', label: 'Wyszukaj' },
+    { id: 'liked', label: 'Polubieni' },
+    { id: 'likesMe', label: 'Lubią Mnie' },
+    { id: 'matches', label: 'Matche' },
+];
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = width - 40;
@@ -19,6 +26,7 @@ const MembersScreen = () => {
     const [zodiacCache, setZodiacCache] = useState({}); // Cache zodiac data by user ID
     const [currentUserAvatar, setCurrentUserAvatar] = useState(null);
     const [likedUsers, setLikedUsers] = useState({}); // Track liked users { userId: true/false }
+    const [activeTab, setActiveTab] = useState('search'); // Tab navigation state
     const navigation = useNavigation();
     const insets = useSafeAreaInsets();
     const { userInfo } = useContext(AuthContext);
@@ -99,12 +107,56 @@ const MembersScreen = () => {
         }
     };
 
+    // Fetch data based on active tab
+    const fetchTabData = async (tabId, searchQuery = '') => {
+        setLoading(true);
+        try {
+            let data = [];
+            switch (tabId) {
+                case 'search':
+                    data = await getMembers(1, 20, searchQuery);
+                    break;
+                case 'liked':
+                    data = await getLikedUsers();
+                    break;
+                case 'likesMe':
+                    data = await getLikesMeUsers();
+                    break;
+                case 'matches':
+                    data = await getMatches();
+                    break;
+                default:
+                    data = await getMembers(1, 20, searchQuery);
+            }
+            setMembers(data || []);
+        } catch (error) {
+            console.error(error);
+            Alert.alert('Error', `Failed to load data: ${error.message}`);
+            setMembers([]);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Effect for tab changes
     useEffect(() => {
         setPage(1);
-        fetchMembers(1, search);
+        fetchTabData(activeTab, search);
+    }, [activeTab]);
+
+    // Effect for search changes (only when on search tab)
+    useEffect(() => {
+        if (activeTab === 'search') {
+            setPage(1);
+            fetchTabData(activeTab, search);
+        }
     }, [search]);
 
     const handleLoadMore = () => {
+        // Only allow pagination for 'search' tab
+        if (activeTab !== 'search') return;
+        if (loading) return;
+
         const nextPage = page + 1;
         setPage(nextPage);
         fetchMembers(nextPage, search);
@@ -194,16 +246,6 @@ const MembersScreen = () => {
 
         return (
             <View style={styles.cardContainer}>
-                <View style={styles.cardHeader}>
-                    <View style={styles.nameRow}>
-                        <Text style={styles.cardName}>{item.name}{age ? `, ${age}` : ''}</Text>
-                    </View>
-                    <View style={styles.statusContainer}>
-                        <View style={styles.statusDot} />
-                        <Text style={styles.statusText}>Active today</Text>
-                    </View>
-                </View>
-
                 <TouchableOpacity
                     activeOpacity={0.9}
                     onPress={() => navigation.navigate('UserProfile', { userId: item.id })}
@@ -217,6 +259,17 @@ const MembersScreen = () => {
                             <Text style={styles.zodiacName}>{zodiac}</Text>
                         </View>
                     )}
+
+                    {/* Name and status overlay at bottom of image */}
+                    <View style={styles.cardOverlay}>
+                        <View style={styles.nameRow}>
+                            <Text style={styles.cardName}>{item.name}{age ? `, ${age}` : ''}</Text>
+                        </View>
+                        <View style={styles.statusContainer}>
+                            <View style={styles.statusDot} />
+                            <Text style={styles.statusText}>Active today</Text>
+                        </View>
+                    </View>
                 </TouchableOpacity>
 
                 <View style={styles.actionButtonsContainer}>
@@ -264,12 +317,52 @@ const MembersScreen = () => {
                 </TouchableOpacity>
             </View>
 
+            {/* Tab Navigation Bar */}
+            <View style={styles.tabBar}>
+                <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.tabBarContent}
+                >
+                    {TABS.map((tab) => (
+                        <TouchableOpacity
+                            key={tab.id}
+                            style={[
+                                styles.tabItem,
+                                activeTab === tab.id && styles.tabItemActive
+                            ]}
+                            onPress={() => setActiveTab(tab.id)}
+                        >
+                            <Text style={[
+                                styles.tabLabel,
+                                activeTab === tab.id && styles.tabLabelActive
+                            ]}>
+                                {tab.label}
+                            </Text>
+                            {activeTab === tab.id && <View style={styles.tabIndicator} />}
+                        </TouchableOpacity>
+                    ))}
+                </ScrollView>
+            </View>
+
+            {/* Empty state message */}
+            {!loading && members.length === 0 && (
+                <View style={styles.emptyState}>
+                    <Text style={styles.emptyStateText}>
+                        {activeTab === 'liked' && 'Nie polubiłeś jeszcze nikogo'}
+                        {activeTab === 'likesMe' && 'Nikt Cię jeszcze nie polubił'}
+                        {activeTab === 'matches' && 'Nie masz jeszcze żadnych dopasowań'}
+                        {activeTab === 'search' && 'Brak wyników'}
+                    </Text>
+                </View>
+            )}
+
             <FlatList
                 data={members}
                 renderItem={renderItem}
                 keyExtractor={item => item.id.toString()}
-                onEndReached={handleLoadMore}
-                onEndReachedThreshold={0.5}
+                onEndReached={activeTab === 'search' ? handleLoadMore : null}
+                onEndReachedThreshold={0.3}
                 ListFooterComponent={loading ? <ActivityIndicator size="large" color="#FFFFFF" /> : null}
                 contentContainerStyle={styles.listContent}
                 showsVerticalScrollIndicator={false}
@@ -301,6 +394,18 @@ const styles = StyleSheet.create({
     },
     imageContainer: {
         position: 'relative',
+        borderRadius: 30,
+        overflow: 'hidden',
+    },
+    cardOverlay: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        paddingHorizontal: 20,
+        paddingVertical: 20,
+        paddingBottom: 50,
+        backgroundColor: 'rgba(0, 0, 0, 0.4)',
     },
     zodiacBadge: {
         position: 'absolute',
@@ -364,6 +469,54 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.1,
         shadowRadius: 5,
         elevation: 5,
+    },
+    // Tab Bar Styles
+    tabBar: {
+        backgroundColor: '#2C2C2E',
+        paddingVertical: 10,
+        borderBottomWidth: 1,
+        borderBottomColor: '#3A3A3C',
+    },
+    tabBarContent: {
+        paddingHorizontal: 15,
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    tabItem: {
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+        marginRight: 4,
+        position: 'relative',
+    },
+    tabItemActive: {},
+    tabLabel: {
+        fontSize: 15,
+        fontWeight: '500',
+        color: '#8E8E93',
+    },
+    tabLabelActive: {
+        color: '#FFFFFF',
+        fontWeight: '700',
+    },
+    tabIndicator: {
+        position: 'absolute',
+        bottom: 0,
+        left: 16,
+        right: 16,
+        height: 3,
+        backgroundColor: '#FF6B9D',
+        borderRadius: 2,
+    },
+    emptyState: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingVertical: 60,
+    },
+    emptyStateText: {
+        color: '#8E8E93',
+        fontSize: 16,
+        textAlign: 'center',
     },
 });
 
