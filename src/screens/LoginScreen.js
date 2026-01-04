@@ -1,14 +1,103 @@
-import React, { useContext, useState } from 'react';
-import { View, Text, TextInput, StyleSheet, ImageBackground, TouchableOpacity } from 'react-native';
+import React, { useContext, useState, useEffect, useRef } from 'react';
+import { View, Text, TextInput, StyleSheet, TouchableOpacity, Dimensions, Animated, Platform } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import { AuthContext } from '../context/AuthContext';
+import { Accelerometer } from 'expo-sensors';
+
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 const LoginScreen = () => {
     const navigation = useNavigation();
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const { login } = useContext(AuthContext);
+
+    // Use useRef to persist animated values across renders
+    const layer1X = useRef(new Animated.Value(0)).current;
+    const layer1Y = useRef(new Animated.Value(0)).current;
+    const layer2X = useRef(new Animated.Value(0)).current;
+    const layer2Y = useRef(new Animated.Value(0)).current;
+    const layer3X = useRef(new Animated.Value(0)).current;
+    const layer3Y = useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        let subscription;
+
+        const startMotionTracking = async () => {
+            try {
+                // Use Accelerometer (more widely supported than DeviceMotion)
+                const isAvailable = await Accelerometer.isAvailableAsync();
+                console.log('Accelerometer available:', isAvailable);
+
+                if (isAvailable) {
+                    // Set update interval
+                    Accelerometer.setUpdateInterval(32); // ~30fps
+
+                    subscription = Accelerometer.addListener((data) => {
+                        const { x, y } = data;
+
+                        // Sensitivity multipliers for each layer (different speeds create parallax)
+                        const sensitivity1 = 20;  // Layer 1 (background) - slowest
+                        const sensitivity2 = 40;  // Layer 2 (middle) - medium
+                        const sensitivity3 = 70;  // Layer 3 (foreground) - fastest
+
+                        // Apply movement - x is left/right tilt, y is front/back tilt
+                        Animated.spring(layer1X, {
+                            toValue: x * sensitivity1,
+                            useNativeDriver: true,
+                            friction: 5,
+                            tension: 40
+                        }).start();
+                        Animated.spring(layer1Y, {
+                            toValue: y * sensitivity1,
+                            useNativeDriver: true,
+                            friction: 5,
+                            tension: 40
+                        }).start();
+
+                        Animated.spring(layer2X, {
+                            toValue: x * sensitivity2,
+                            useNativeDriver: true,
+                            friction: 5,
+                            tension: 40
+                        }).start();
+                        Animated.spring(layer2Y, {
+                            toValue: y * sensitivity2,
+                            useNativeDriver: true,
+                            friction: 5,
+                            tension: 40
+                        }).start();
+
+                        Animated.spring(layer3X, {
+                            toValue: x * sensitivity3,
+                            useNativeDriver: true,
+                            friction: 5,
+                            tension: 40
+                        }).start();
+                        Animated.spring(layer3Y, {
+                            toValue: y * sensitivity3,
+                            useNativeDriver: true,
+                            friction: 5,
+                            tension: 40
+                        }).start();
+                    });
+                } else {
+                    console.log('Accelerometer not available on this device');
+                }
+            } catch (error) {
+                console.log('Error setting up accelerometer:', error);
+            }
+        };
+
+        startMotionTracking();
+
+        return () => {
+            if (subscription) {
+                subscription.remove();
+            }
+        };
+    }, []);
 
     const handleLogin = async () => {
         if (!username || !password) {
@@ -22,14 +111,57 @@ const LoginScreen = () => {
     };
 
     return (
-        <ImageBackground
-            source={require('../../assets/login-background.png')}
-            style={styles.background}
-            resizeMode="cover"
-        >
+        <View style={styles.background}>
+            {/* Parallax Background Layers */}
+            <Animated.Image
+                source={require('../../assets/layer-1.jpg')}
+                style={[
+                    styles.parallaxLayer,
+                    styles.layer1,
+                    {
+                        transform: [
+                            { translateX: layer1X },
+                            { translateY: layer1Y },
+                        ],
+                    },
+                ]}
+                resizeMode="cover"
+            />
+            <Animated.Image
+                source={require('../../assets/layer-2.png')}
+                style={[
+                    styles.parallaxLayer,
+                    styles.layer2,
+                    {
+                        transform: [
+                            { scale: 1.8 },
+                            { translateX: Animated.multiply(layer2X, -1) },
+                            { translateY: Animated.multiply(layer2Y, -1) },
+                        ],
+                    },
+                ]}
+                resizeMode="contain"
+            />
+            <Animated.Image
+                source={require('../../assets/layer-3.png')}
+                style={[
+                    styles.parallaxLayer,
+                    styles.layer3,
+                    {
+                        transform: [
+                            { scale: 2.0 },
+                            { translateX: layer3X },
+                            { translateY: layer3Y },
+                        ],
+                    },
+                ]}
+                resizeMode="contain"
+            />
+
+            {/* Content Overlay */}
             <View style={styles.overlay}>
                 <View style={styles.container}>
-                    <Text style={styles.title}>Login Screen</Text>
+                    <Text style={styles.title}>Prawdziwa Miłość</Text>
                     <TextInput
                         placeholder="Username"
                         value={username}
@@ -74,7 +206,7 @@ const LoginScreen = () => {
                     <Text style={styles.orText}>Nie masz konta?</Text>
                 </View>
             </View>
-        </ImageBackground>
+        </View>
     );
 };
 
@@ -83,12 +215,36 @@ const styles = StyleSheet.create({
         flex: 1,
         width: '100%',
         height: '100%',
+        backgroundColor: '#0b0c1e',
+    },
+    parallaxLayer: {
+        position: 'absolute',
+        // Make layers larger than screen for parallax movement room
+        width: SCREEN_WIDTH * 1.3,
+        height: SCREEN_HEIGHT * 1.3,
+        // Center the oversized layers
+        left: -SCREEN_WIDTH * 0.15,
+        top: -SCREEN_HEIGHT * 0.15,
+    },
+    layer1: {
+        zIndex: 1,
+    },
+    layer2: {
+        zIndex: 2,
+        // Venus wyżej o 1/4
+        top: -SCREEN_HEIGHT * 0.35,
+    },
+    layer3: {
+        zIndex: 3,
+        // Para wyżej o 1/4
+        top: SCREEN_HEIGHT * 0.08,
     },
     overlay: {
         flex: 1,
-        backgroundColor: 'rgba(0, 0, 0, 0.4)', // Semi-transparent overlay for better readability
+        backgroundColor: 'rgba(0, 0, 0, 0.4)',
         justifyContent: 'center',
         alignItems: 'center',
+        zIndex: 10,
     },
     container: {
         width: '80%',

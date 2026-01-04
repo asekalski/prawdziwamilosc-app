@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useContext } from 'react';
-import { View, Text, FlatList, StyleSheet, TextInput, ActivityIndicator, Image, TouchableOpacity, Dimensions, Alert, SafeAreaView, ScrollView } from 'react-native';
+import React, { useState, useEffect, useContext, useRef } from 'react';
+import { View, Text, FlatList, StyleSheet, TextInput, ActivityIndicator, Image, TouchableOpacity, Dimensions, Alert, SafeAreaView, ScrollView, Modal, Animated } from 'react-native';
 import { getMembers, getXProfileGroups, getMember, toggleLike, getLikedUsers, getLikesMeUsers, getMatches } from '../api/members';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '@react-navigation/native';
@@ -28,6 +28,12 @@ const MembersScreen = () => {
     const [likedUsers, setLikedUsers] = useState({}); // Track liked users { userId: true/false }
     const [activeTab, setActiveTab] = useState('search'); // Tab navigation state
     const [hasMore, setHasMore] = useState(true); // Track if there are more results to load
+
+    // Match animation state
+    const [showMatchModal, setShowMatchModal] = useState(false);
+    const [matchedUser, setMatchedUser] = useState(null);
+    const matchScaleAnim = useRef(new Animated.Value(0)).current;
+    const heartPulseAnim = useRef(new Animated.Value(1)).current;
     const navigation = useNavigation();
     const insets = useSafeAreaInsets();
     const { userInfo } = useContext(AuthContext);
@@ -210,6 +216,15 @@ const MembersScreen = () => {
             // Update state based on API response
             if (result.status === 'liked') {
                 setLikedUsers(prev => ({ ...prev, [userId]: true }));
+
+                // Check if it's a match!
+                if (result.is_match) {
+                    console.log('🎉 It\'s a Match!');
+                    const matchedMember = members.find(m => m.id === userId);
+                    if (matchedMember) {
+                        showMatchAnimation(matchedMember);
+                    }
+                }
             } else {
                 setLikedUsers(prev => ({ ...prev, [userId]: false }));
             }
@@ -218,6 +233,63 @@ const MembersScreen = () => {
             // Revert optimistic update on error
             setLikedUsers(prev => ({ ...prev, [userId]: !prev[userId] }));
             Alert.alert('Error', 'Failed to like user. Please try again.');
+        }
+    };
+
+    // Show match animation
+    const showMatchAnimation = (user) => {
+        setMatchedUser(user);
+        setShowMatchModal(true);
+
+        // Reset animations
+        matchScaleAnim.setValue(0);
+        heartPulseAnim.setValue(1);
+
+        // Start entrance animation
+        Animated.spring(matchScaleAnim, {
+            toValue: 1,
+            tension: 50,
+            friction: 7,
+            useNativeDriver: true,
+        }).start();
+
+        // Start heart pulse animation loop
+        Animated.loop(
+            Animated.sequence([
+                Animated.timing(heartPulseAnim, {
+                    toValue: 1.2,
+                    duration: 300,
+                    useNativeDriver: true,
+                }),
+                Animated.timing(heartPulseAnim, {
+                    toValue: 1,
+                    duration: 300,
+                    useNativeDriver: true,
+                }),
+            ])
+        ).start();
+
+        // Auto-close after 4 seconds
+        setTimeout(() => {
+            closeMatchModal();
+        }, 4000);
+    };
+
+    const closeMatchModal = () => {
+        Animated.timing(matchScaleAnim, {
+            toValue: 0,
+            duration: 200,
+            useNativeDriver: true,
+        }).start(() => {
+            setShowMatchModal(false);
+            setMatchedUser(null);
+        });
+    };
+
+    const handleSendMessage = () => {
+        closeMatchModal();
+        if (matchedUser) {
+            navigation.navigate('NewMessage', { recipientId: matchedUser.id, recipientName: matchedUser.name });
         }
     };
 
@@ -378,6 +450,73 @@ const MembersScreen = () => {
                 contentContainerStyle={styles.listContent}
                 showsVerticalScrollIndicator={false}
             />
+
+            {/* Match Animation Modal */}
+            <Modal
+                visible={showMatchModal}
+                transparent={true}
+                animationType="none"
+                onRequestClose={closeMatchModal}
+            >
+                <TouchableOpacity
+                    style={styles.matchModalOverlay}
+                    activeOpacity={1}
+                    onPress={closeMatchModal}
+                >
+                    <Animated.View
+                        style={[
+                            styles.matchModalContent,
+                            {
+                                transform: [{ scale: matchScaleAnim }],
+                                opacity: matchScaleAnim,
+                            }
+                        ]}
+                    >
+                        {/* Avatar container */}
+                        <View style={styles.matchAvatarsContainer}>
+                            <Image
+                                source={{ uri: currentUserAvatar || 'https://via.placeholder.com/120' }}
+                                style={styles.matchAvatar}
+                            />
+                            <Animated.View
+                                style={[
+                                    styles.matchHeartContainer,
+                                    { transform: [{ scale: heartPulseAnim }] }
+                                ]}
+                            >
+                                <Ionicons name="heart" size={40} color="#FF6B9D" />
+                            </Animated.View>
+                            <Image
+                                source={{ uri: matchedUser?.hires_avatar?.large || matchedUser?.hires_avatar?.full || matchedUser?.avatar_urls?.full || 'https://via.placeholder.com/120' }}
+                                style={styles.matchAvatar}
+                            />
+                        </View>
+
+                        {/* Match text */}
+                        <Text style={styles.matchTitle}>🎉 Macie Match! 🎉</Text>
+                        <Text style={styles.matchSubtitle}>
+                            Ty i {matchedUser?.name || 'ta osoba'} wzajemnie się polubiliście!
+                        </Text>
+
+                        {/* Action buttons */}
+                        <View style={styles.matchButtonsContainer}>
+                            <TouchableOpacity
+                                style={styles.matchPrimaryButton}
+                                onPress={handleSendMessage}
+                            >
+                                <Ionicons name="chatbubble" size={20} color="#fff" />
+                                <Text style={styles.matchPrimaryButtonText}>Wyślij wiadomość</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.matchSecondaryButton}
+                                onPress={closeMatchModal}
+                            >
+                                <Text style={styles.matchSecondaryButtonText}>Kontynuuj przeglądanie</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </Animated.View>
+                </TouchableOpacity>
+            </Modal>
         </View>
     );
 };
@@ -528,6 +667,89 @@ const styles = StyleSheet.create({
         color: '#8E8E93',
         fontSize: 16,
         textAlign: 'center',
+    },
+    // Match Modal Styles
+    matchModalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(139, 69, 139, 0.95)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    matchModalContent: {
+        alignItems: 'center',
+        padding: 30,
+    },
+    matchAvatarsContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 30,
+    },
+    matchAvatar: {
+        width: 120,
+        height: 120,
+        borderRadius: 60,
+        borderWidth: 4,
+        borderColor: '#fff',
+    },
+    matchHeartContainer: {
+        marginHorizontal: 15,
+        backgroundColor: '#fff',
+        width: 60,
+        height: 60,
+        borderRadius: 30,
+        justifyContent: 'center',
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 8,
+    },
+    matchTitle: {
+        fontSize: 32,
+        fontWeight: 'bold',
+        color: '#fff',
+        marginBottom: 10,
+        textAlign: 'center',
+    },
+    matchSubtitle: {
+        fontSize: 16,
+        color: 'rgba(255, 255, 255, 0.9)',
+        textAlign: 'center',
+        marginBottom: 40,
+    },
+    matchButtonsContainer: {
+        width: '100%',
+        alignItems: 'center',
+    },
+    matchPrimaryButton: {
+        flexDirection: 'row',
+        backgroundColor: '#FF6B9D',
+        paddingVertical: 15,
+        paddingHorizontal: 40,
+        borderRadius: 30,
+        alignItems: 'center',
+        marginBottom: 15,
+        shadowColor: '#FF6B9D',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.4,
+        shadowRadius: 8,
+        elevation: 5,
+    },
+    matchPrimaryButtonText: {
+        color: '#fff',
+        fontSize: 18,
+        fontWeight: '600',
+        marginLeft: 10,
+    },
+    matchSecondaryButton: {
+        paddingVertical: 12,
+        paddingHorizontal: 30,
+    },
+    matchSecondaryButtonText: {
+        color: 'rgba(255, 255, 255, 0.8)',
+        fontSize: 16,
+        fontWeight: '500',
     },
 });
 
