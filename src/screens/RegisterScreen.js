@@ -104,7 +104,7 @@ const RegisterScreen = () => {
 
             Alert.alert(
                 'Sprawdź email!',
-                'Wysłaliśmy Ci email z linkiem aktywacyjnym. Kliknij link w mailu aby aktywować swoje konto.',
+                'Wysłaliśmy Ci email z linkiem aktywacyjnym. Kliknij link w mailu aby aktywować swoje konto.\n\n⚠️ Sprawdź również folder SPAM/Oferty!',
                 [
                     {
                         text: 'OK',

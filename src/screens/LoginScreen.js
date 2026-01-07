@@ -40,7 +40,7 @@ const LoginScreen = () => {
                         // Sensitivity multipliers for each layer (different speeds create parallax)
                         const sensitivity1 = 20;  // Layer 1 (background) - slowest
                         const sensitivity2 = 40;  // Layer 2 (middle) - medium
-                        const sensitivity3 = 70;  // Layer 3 (foreground) - fastest
+                        const sensitivity3 = 63;  // Layer 3 (foreground) - reduced by 10%
 
                         // Apply movement - x is left/right tilt, y is front/back tilt
                         Animated.spring(layer1X, {
