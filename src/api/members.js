@@ -1,7 +1,7 @@
 import client from './client';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export const getMembers = async (page = 1, per_page = 20, search = '', min_age = null, max_age = null) => {
+export const getMembers = async (page = 1, per_page = 20, search = '', min_age = null, max_age = null, faith = '', politics = '', work = '', diet = '') => {
     try {
         // Sprawdź czy user jest zalogowany
         const token = await AsyncStorage.getItem('userToken');
@@ -19,8 +19,12 @@ export const getMembers = async (page = 1, per_page = 20, search = '', min_age =
 
         if (min_age) params.min_age = min_age;
         if (max_age) params.max_age = max_age;
+        if (faith) params.faith = faith;
+        if (politics) params.politics = politics;
+        if (work) params.work = work;
+        if (diet) params.diet = diet;
 
-        const response = await client.get('/buddypress/v1/members', {
+        const response = await client.get('/sk/v1/members', {
             params
         });
         return response.data;

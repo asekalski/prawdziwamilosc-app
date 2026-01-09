@@ -35,6 +35,13 @@ const FILTER_OPTIONS = [
     { id: 'social-media', name: 'Social media', icon: '📱' },
 ];
 
+const FILTER_VALUES = {
+    faith: ['Wierzący', 'Ateista', 'Duchowy', 'Inne'],
+    politics: ['Konserwatywne', 'Liberalne', 'Centrowe', 'Apolityczny'],
+    work: ['Korporacja', 'Własny Biznes', 'Normalna Praca', 'Praca Kreatywna', 'Nie pracuję'],
+    diet: ['Wszystkożerca', 'Wegetarianin', 'Weganin', 'Keto/Inne']
+};
+
 const MembersScreen = () => {
     const [members, setMembers] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -50,6 +57,13 @@ const MembersScreen = () => {
     const [showFiltersModal, setShowFiltersModal] = useState(false);
     const [ageRange, setAgeRange] = useState({ min: 18, max: 65 });
     const [hasBio, setHasBio] = useState(false);
+    const [extendedFilters, setExtendedFilters] = useState({
+        faith: '',
+        politics: '',
+        work: '',
+        diet: ''
+    });
+    const [activeFilterId, setActiveFilterId] = useState(null); // For accordion
     const [filtersLoaded, setFiltersLoaded] = useState(false);
 
     // Load saved filters from AsyncStorage on component mount
@@ -64,6 +78,14 @@ const MembersScreen = () => {
                     }
                     if (typeof filters.hasBio !== 'undefined') {
                         setHasBio(filters.hasBio);
+                    }
+                    if (filters.faith || filters.politics || filters.work || filters.diet) {
+                        setExtendedFilters({
+                            faith: filters.faith || '',
+                            politics: filters.politics || '',
+                            work: filters.work || '',
+                            diet: filters.diet || ''
+                        });
                     }
                     console.log('Filters loaded from AsyncStorage:', filters);
                 }
@@ -82,7 +104,8 @@ const MembersScreen = () => {
             const filters = {
                 ageMin: ageRange.min.toString(),
                 ageMax: ageRange.max.toString(),
-                hasBio: hasBio
+                hasBio: hasBio,
+                ...extendedFilters
             };
             await AsyncStorage.setItem('pmFilters', JSON.stringify(filters));
             console.log('Filters saved to AsyncStorage:', filters);
@@ -191,11 +214,12 @@ const MembersScreen = () => {
         if (loading && pageNum > 1) return;
         setLoading(true);
         try {
-            const data = await getMembers(pageNum, 20, searchQuery, ageRange.min, ageRange.max);
+            const data = await getMembers(pageNum, 20, searchQuery, ageRange.min, ageRange.max, extendedFilters.faith, extendedFilters.politics, extendedFilters.work, extendedFilters.diet);
+
 
             // Enrich members with zodiac data in background
             data.forEach(async (member) => {
-                if (!zodiacCache[member.id]) {
+                if (!member.zodiac && !zodiacCache[member.id]) {
                     const zodiac = await enrichMemberWithXProfile(member);
                     if (zodiac) {
                         setZodiacCache(prev => ({ ...prev, [member.id]: zodiac }));
@@ -230,7 +254,7 @@ const MembersScreen = () => {
             let data = [];
             switch (tabId) {
                 case 'search':
-                    data = await getMembers(1, 20, searchQuery, ageRange.min, ageRange.max);
+                    data = await getMembers(1, 20, searchQuery, ageRange.min, ageRange.max, extendedFilters.faith, extendedFilters.politics, extendedFilters.work, extendedFilters.diet);
                     break;
                 case 'liked':
                     data = await getLikedUsers();
@@ -242,7 +266,7 @@ const MembersScreen = () => {
                     data = await getMatches();
                     break;
                 default:
-                    data = await getMembers(1, 20, searchQuery, ageRange.min, ageRange.max);
+                    data = await getMembers(1, 20, searchQuery, ageRange.min, ageRange.max, extendedFilters.faith, extendedFilters.politics, extendedFilters.work, extendedFilters.diet);
             }
             setMembers(data || []);
         } catch (error) {
@@ -417,16 +441,15 @@ const MembersScreen = () => {
     };
 
     const renderItem = ({ item }) => {
-        const zodiac = zodiacCache[item.id] || getField(item, 303); // Try cache first, fallback to item data
-        const birthDate = getField(item, 107); // Data urodzenia
-        const age = calculateAge(birthDate);
+        const zodiac = item.zodiac || zodiacCache[item.id] || getField(item, 303); // Prefer item.zodiac from API
+        const age = item.age || calculateAge(getField(item, 107)); // Prefer item.age from API
         const zodiacIcon = getZodiacIcon(zodiac);
 
         // Get the best available image - prefer high-res from WordPress media library
         const imageUrl = item.hires_avatar?.large || item.hires_avatar?.full || item.avatar_urls?.full;
 
         // DEBUG
-        console.log('User:', item.name, 'Zodiac:', zodiac, 'Has xprofile:', !!item.xprofile);
+        // console.log('User:', item.name, 'Zodiac:', zodiac, 'Has xprofile:', !!item.xprofile);
         console.log('Image URL:', imageUrl, 'HiRes:', item.hires_avatar);
 
         return (
@@ -450,6 +473,11 @@ const MembersScreen = () => {
                         <View style={styles.nameRow}>
                             <Text style={styles.cardName}>{item.name}{age ? `, ${age}` : ''}</Text>
                         </View>
+                        {item.bio ? (
+                            <Text style={styles.cardBio} numberOfLines={2} ellipsizeMode="tail">
+                                {item.bio}
+                            </Text>
+                        ) : null}
                         <View style={styles.statusContainer}>
                             <View style={styles.statusDot} />
                             <Text style={styles.statusText}>Active today</Text>
@@ -481,6 +509,62 @@ const MembersScreen = () => {
                 </View>
             </View >
         )
+    };
+
+    const handleResetFilters = async () => {
+        const defaults = {
+            min: 18,
+            max: 65,
+            hasBio: false,
+            faith: '',
+            politics: '',
+            work: '',
+            diet: ''
+        };
+
+        // Update State
+        setAgeRange({ min: defaults.min, max: defaults.max });
+        setHasBio(defaults.hasBio);
+        setExtendedFilters({
+            faith: defaults.faith,
+            politics: defaults.politics,
+            work: defaults.work,
+            diet: defaults.diet
+        });
+
+        // Save empty filters
+        try {
+            const filters = {
+                ageMin: defaults.min.toString(),
+                ageMax: defaults.max.toString(),
+                hasBio: defaults.hasBio,
+                faith: defaults.faith,
+                politics: defaults.politics,
+                work: defaults.work,
+                diet: defaults.diet
+            };
+            await AsyncStorage.setItem('pmFilters', JSON.stringify(filters));
+        } catch (error) {
+            console.error('Error clearing filters:', error);
+        }
+
+        // Close Modal
+        setShowFiltersModal(false);
+
+        // Refresh Grid with Defaults
+        if (activeTab === 'search') {
+            setLoading(true);
+            try {
+                const data = await getMembers(1, 20, search, defaults.min, defaults.max, defaults.faith, defaults.politics, defaults.work, defaults.diet);
+                setMembers(data || []);
+                setPage(1);
+                setHasMore(true);
+            } catch (error) {
+                console.error("Error resetting grid:", error);
+            } finally {
+                setLoading(false);
+            }
+        }
     };
 
     return (
@@ -701,6 +785,53 @@ const MembersScreen = () => {
                         </TouchableOpacity>
 
                         {/* Filter Options List */}
+                        {/* Custom Filters: Faith, Politics, Work, Diet */}
+                        {[
+                            { id: 'faith', name: 'Religia', icon: '🛐', options: FILTER_VALUES.faith },
+                            { id: 'politics', name: 'Poglądy', icon: '⚖️', options: FILTER_VALUES.politics },
+                            { id: 'work', name: 'Praca', icon: '💼', options: FILTER_VALUES.work },
+                            { id: 'diet', name: 'Dieta', icon: '🥗', options: FILTER_VALUES.diet },
+                        ].map((filter) => (
+                            <View key={filter.id}>
+                                <TouchableOpacity
+                                    style={styles.filterRow}
+                                    onPress={() => setActiveFilterId(activeFilterId === filter.id ? null : filter.id)}
+                                >
+                                    <Text style={styles.filterIcon}>{filter.icon}</Text>
+                                    <Text style={styles.filterOptionName}>{filter.name}</Text>
+                                    <Text style={[styles.filterValue, extendedFilters[filter.id] ? { color: '#e91e63' } : {}]}>
+                                        {extendedFilters[filter.id] || 'Wybierz ›'}
+                                    </Text>
+                                </TouchableOpacity>
+
+                                {activeFilterId === filter.id && (
+                                    <View style={{ backgroundColor: '#333', paddingVertical: 10, paddingHorizontal: 20 }}>
+                                        <TouchableOpacity
+                                            style={{ paddingVertical: 10, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: '#444' }}
+                                            onPress={() => {
+                                                setExtendedFilters({ ...extendedFilters, [filter.id]: '' });
+                                                setActiveFilterId(null);
+                                            }}
+                                        >
+                                            <Text style={{ color: '#aaa' }}>Wszystkie</Text>
+                                        </TouchableOpacity>
+                                        {filter.options.map(opt => (
+                                            <TouchableOpacity
+                                                key={opt}
+                                                style={{ paddingVertical: 12, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: '#444' }}
+                                                onPress={() => {
+                                                    setExtendedFilters({ ...extendedFilters, [filter.id]: opt });
+                                                    setActiveFilterId(null);
+                                                }}
+                                            >
+                                                <Text style={{ color: extendedFilters[filter.id] === opt ? '#e91e63' : '#fff', fontWeight: extendedFilters[filter.id] === opt ? 'bold' : 'normal' }}>{opt}</Text>
+                                            </TouchableOpacity>
+                                        ))}
+                                    </View>
+                                )}
+                            </View>
+                        ))}
+
                         {FILTER_OPTIONS.map((filter) => (
                             <TouchableOpacity key={filter.id} style={styles.filterRow}>
                                 <Text style={styles.filterIcon}>{filter.icon}</Text>
@@ -708,6 +839,25 @@ const MembersScreen = () => {
                                 <Text style={styles.filterValue}>Wybierz ›</Text>
                             </TouchableOpacity>
                         ))}
+
+                        {/* Reset Filters Button */}
+                        <TouchableOpacity
+                            style={{
+                                marginTop: 30,
+                                marginBottom: 50,
+                                marginHorizontal: 20,
+                                backgroundColor: 'transparent',
+                                borderWidth: 1,
+                                borderColor: '#E74C3C',
+                                paddingVertical: 12,
+                                borderRadius: 25,
+                                alignItems: 'center',
+                            }}
+                            onPress={handleResetFilters}
+                        >
+                            <Text style={{ color: '#E74C3C', fontWeight: '600', fontSize: 16 }}>Zresetuj wszystkie filtry</Text>
+                        </TouchableOpacity>
+
                     </ScrollView>
                 </View>
             </Modal>
@@ -1097,6 +1247,14 @@ const styles = StyleSheet.create({
     filterValue: {
         color: 'rgba(255,255,255,0.5)',
         fontSize: 14,
+    },
+    cardBio: {
+        fontSize: 13,
+        color: '#E0E0E0',
+        marginBottom: 6,
+        textShadowColor: 'rgba(0, 0, 0, 0.75)',
+        textShadowOffset: { width: -1, height: 1 },
+        textShadowRadius: 4,
     },
 });
 
