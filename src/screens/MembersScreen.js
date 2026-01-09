@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useContext, useRef } from 'react';
-import { View, Text, FlatList, StyleSheet, TextInput, ActivityIndicator, Image, TouchableOpacity, Dimensions, Alert, SafeAreaView, ScrollView, Modal, Animated } from 'react-native';
+import { View, Text, FlatList, StyleSheet, TextInput, ActivityIndicator, Image, TouchableOpacity, Dimensions, Alert, SafeAreaView, ScrollView, Modal, Animated, PanResponder } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getMembers, getXProfileGroups, getMember, toggleLike, getLikedUsers, getLikesMeUsers, getMatches } from '../api/members';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '@react-navigation/native';
@@ -18,6 +19,22 @@ const { width } = Dimensions.get('window');
 const CARD_WIDTH = width - 40;
 const IMAGE_HEIGHT = CARD_WIDTH * 1.2;
 
+const FILTER_OPTIONS = [
+    { id: 'interests', name: 'Zainteresowania', icon: '👥' },
+    { id: 'looking-for', name: 'Czego szukasz', icon: '💑' },
+    { id: 'languages', name: 'Języki', icon: '🌐' },
+    { id: 'zodiac', name: 'Znak zodiaku', icon: '♈' },
+    { id: 'education', name: 'Wykształcenie', icon: '🎓' },
+    { id: 'family-plans', name: 'Plany rodzinne', icon: '👶' },
+    { id: 'communication', name: 'Styl komunikacji', icon: '💬' },
+    { id: 'love-style', name: 'Styl miłości', icon: '❤️' },
+    { id: 'pets', name: 'Zwierzęta', icon: '🐾' },
+    { id: 'drinking', name: 'Alkohol', icon: '🍷' },
+    { id: 'smoking', name: 'Palenie', icon: '🚬' },
+    { id: 'workout', name: 'Trening', icon: '💪' },
+    { id: 'social-media', name: 'Social media', icon: '📱' },
+];
+
 const MembersScreen = () => {
     const [members, setMembers] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -28,6 +45,91 @@ const MembersScreen = () => {
     const [likedUsers, setLikedUsers] = useState({}); // Track liked users { userId: true/false }
     const [activeTab, setActiveTab] = useState('search'); // Tab navigation state
     const [hasMore, setHasMore] = useState(true); // Track if there are more results to load
+
+    // Filter modal state
+    const [showFiltersModal, setShowFiltersModal] = useState(false);
+    const [ageRange, setAgeRange] = useState({ min: 18, max: 65 });
+    const [hasBio, setHasBio] = useState(false);
+    const [filtersLoaded, setFiltersLoaded] = useState(false);
+
+    // Load saved filters from AsyncStorage on component mount
+    useEffect(() => {
+        const loadFilters = async () => {
+            try {
+                const savedFilters = await AsyncStorage.getItem('pmFilters');
+                if (savedFilters) {
+                    const filters = JSON.parse(savedFilters);
+                    if (filters.ageMin && filters.ageMax) {
+                        setAgeRange({ min: parseInt(filters.ageMin), max: parseInt(filters.ageMax) });
+                    }
+                    if (typeof filters.hasBio !== 'undefined') {
+                        setHasBio(filters.hasBio);
+                    }
+                    console.log('Filters loaded from AsyncStorage:', filters);
+                }
+            } catch (error) {
+                console.error('Error loading filters:', error);
+            } finally {
+                setFiltersLoaded(true);
+            }
+        };
+        loadFilters();
+    }, []);
+
+    // Save filters to AsyncStorage
+    const saveFilters = async () => {
+        try {
+            const filters = {
+                ageMin: ageRange.min.toString(),
+                ageMax: ageRange.max.toString(),
+                hasBio: hasBio
+            };
+            await AsyncStorage.setItem('pmFilters', JSON.stringify(filters));
+            console.log('Filters saved to AsyncStorage:', filters);
+        } catch (error) {
+            console.error('Error saving filters:', error);
+        }
+    };
+
+    // Slider state
+    const sliderWidthRef = useRef(0);
+    const minValRef = useRef(ageRange.min);
+    const maxValRef = useRef(ageRange.max);
+
+    useEffect(() => {
+        minValRef.current = ageRange.min;
+        maxValRef.current = ageRange.max;
+    }, [ageRange]);
+
+    const prMin = useRef(PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderGrant: (evt, gestureState) => {
+            gestureState.startValue = minValRef.current;
+        },
+        onPanResponderMove: (evt, gestureState) => {
+            if (sliderWidthRef.current === 0) return;
+            const diff = (gestureState.dx / sliderWidthRef.current) * 47;
+            const newVal = Math.round(gestureState.startValue + diff);
+            const clamped = Math.max(18, Math.min(newVal, maxValRef.current - 1));
+            setAgeRange(prev => ({ ...prev, min: clamped }));
+        }
+    })).current;
+
+    const prMax = useRef(PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderGrant: (evt, gestureState) => {
+            gestureState.startValue = maxValRef.current;
+        },
+        onPanResponderMove: (evt, gestureState) => {
+            if (sliderWidthRef.current === 0) return;
+            const diff = (gestureState.dx / sliderWidthRef.current) * 47;
+            const newVal = Math.round(gestureState.startValue + diff);
+            const clamped = Math.max(minValRef.current + 1, Math.min(newVal, 65));
+            setAgeRange(prev => ({ ...prev, max: clamped }));
+        }
+    })).current;
 
     // Match animation state
     const [showMatchModal, setShowMatchModal] = useState(false);
@@ -89,7 +191,7 @@ const MembersScreen = () => {
         if (loading && pageNum > 1) return;
         setLoading(true);
         try {
-            const data = await getMembers(pageNum, 20, searchQuery);
+            const data = await getMembers(pageNum, 20, searchQuery, ageRange.min, ageRange.max);
 
             // Enrich members with zodiac data in background
             data.forEach(async (member) => {
@@ -128,7 +230,7 @@ const MembersScreen = () => {
             let data = [];
             switch (tabId) {
                 case 'search':
-                    data = await getMembers(1, 20, searchQuery);
+                    data = await getMembers(1, 20, searchQuery, ageRange.min, ageRange.max);
                     break;
                 case 'liked':
                     data = await getLikedUsers();
@@ -140,7 +242,7 @@ const MembersScreen = () => {
                     data = await getMatches();
                     break;
                 default:
-                    data = await getMembers(1, 20, searchQuery);
+                    data = await getMembers(1, 20, searchQuery, ageRange.min, ageRange.max);
             }
             setMembers(data || []);
         } catch (error) {
@@ -384,7 +486,7 @@ const MembersScreen = () => {
     return (
         <View style={[styles.container, { paddingTop: insets.top }]}>
             <View style={styles.header}>
-                <TouchableOpacity style={styles.headerButton}>
+                <TouchableOpacity style={styles.headerButton} onPress={() => setShowFiltersModal(true)}>
                     <Ionicons name="options-outline" size={24} color="#FFFFFF" />
                 </TouchableOpacity>
                 <View style={{ flex: 1 }} />
@@ -516,6 +618,98 @@ const MembersScreen = () => {
                         </View>
                     </Animated.View>
                 </TouchableOpacity>
+            </Modal>
+
+            {/* Filters Modal */}
+            <Modal
+                visible={showFiltersModal}
+                transparent={false}
+                animationType="slide"
+                onRequestClose={() => setShowFiltersModal(false)}
+            >
+                <View style={styles.filtersModalContainer}>
+                    <View style={[styles.filtersHeader, { paddingTop: insets.top + 10 }]}>
+                        <Text style={styles.filtersTitle}>Ustawienia wyszukiwania</Text>
+                        <TouchableOpacity onPress={async () => {
+                            await saveFilters();
+                            setShowFiltersModal(false);
+                            if (activeTab === 'search') {
+                                setPage(1);
+                                setHasMore(true);
+                                fetchTabData('search', search);
+                            }
+                        }}>
+                            <Text style={styles.filtersDoneButton}>Gotowe</Text>
+                        </TouchableOpacity>
+                    </View>
+
+                    <ScrollView style={styles.filtersContent}>
+                        {/* Age Range Section */}
+                        <View style={styles.filterSection}>
+                            <Text style={styles.filterSectionLabel}>ZAKRES WIEKOWY</Text>
+                            <View
+                                style={styles.ageSliderContainer}
+                                onLayout={(e) => { sliderWidthRef.current = e.nativeEvent.layout.width; }}
+                            >
+                                <View style={styles.ageTrack}>
+                                    <View style={[
+                                        styles.ageRangeFill,
+                                        {
+                                            left: `${((ageRange.min - 18) / 47) * 100}%`,
+                                            width: `${((ageRange.max - ageRange.min) / 47) * 100}%`
+                                        }
+                                    ]} />
+                                </View>
+                                <View style={styles.ageThumbsContainer} pointerEvents="box-none">
+                                    {/* Min Thumb */}
+                                    <View
+                                        style={[
+                                            styles.ageThumbTouchArea,
+                                            { left: `${((ageRange.min - 18) / 47) * 100}%` }
+                                        ]}
+                                        {...prMin.panHandlers}
+                                    >
+                                        <View style={styles.ageThumb} />
+                                    </View>
+                                    {/* Max Thumb */}
+                                    <View
+                                        style={[
+                                            styles.ageThumbTouchArea,
+                                            { left: `${((ageRange.max - 18) / 47) * 100}%` }
+                                        ]}
+                                        {...prMax.panHandlers}
+                                    >
+                                        <View style={styles.ageThumb} />
+                                    </View>
+                                </View>
+                            </View>
+                            <View style={styles.ageLabels}>
+                                <Text style={styles.ageLabel}>{ageRange.min} lat</Text>
+                                <Text style={styles.ageLabel}>{ageRange.max >= 65 ? '65+' : ageRange.max + ' lat'}</Text>
+                            </View>
+                        </View>
+
+                        {/* Has Bio Toggle */}
+                        <TouchableOpacity
+                            style={styles.filterToggleRow}
+                            onPress={() => setHasBio(!hasBio)}
+                        >
+                            <Text style={styles.filterOptionName}>Ma bio</Text>
+                            <View style={[styles.toggleTrack, hasBio && styles.toggleTrackActive]}>
+                                <View style={[styles.toggleThumb, hasBio && styles.toggleThumbActive]} />
+                            </View>
+                        </TouchableOpacity>
+
+                        {/* Filter Options List */}
+                        {FILTER_OPTIONS.map((filter) => (
+                            <TouchableOpacity key={filter.id} style={styles.filterRow}>
+                                <Text style={styles.filterIcon}>{filter.icon}</Text>
+                                <Text style={styles.filterOptionName}>{filter.name}</Text>
+                                <Text style={styles.filterValue}>Wybierz ›</Text>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                </View>
             </Modal>
         </View>
     );
@@ -750,6 +944,159 @@ const styles = StyleSheet.create({
         color: 'rgba(255, 255, 255, 0.8)',
         fontSize: 16,
         fontWeight: '500',
+    },
+    // Filter Modal Styles
+    filtersModalContainer: {
+        flex: 1,
+        backgroundColor: '#0d0d1a',
+    },
+    filtersHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+        paddingBottom: 15,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255,255,255,0.1)',
+    },
+    filtersTitle: {
+        fontSize: 18,
+        fontWeight: '600',
+        color: '#fff',
+    },
+    filtersDoneButton: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#2ECC71',
+    },
+    filtersContent: {
+        flex: 1,
+        paddingHorizontal: 20,
+    },
+    filterSection: {
+        paddingVertical: 24,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255,255,255,0.1)',
+    },
+    filterSectionLabel: {
+        fontSize: 12,
+        color: 'rgba(255,255,255,0.6)',
+        letterSpacing: 1,
+        marginBottom: 20,
+    },
+    ageSliderContainer: {
+        height: 40,
+        justifyContent: 'center',
+        marginBottom: 10,
+    },
+    ageTrack: {
+        height: 4,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        borderRadius: 2,
+    },
+    ageRangeFill: {
+        position: 'absolute',
+        height: 4,
+        backgroundColor: '#2ECC71',
+        borderRadius: 2,
+    },
+    ageThumbsContainer: {
+        position: 'absolute',
+        width: '100%',
+        height: 40,
+    },
+    ageThumb: {
+        width: 24,
+        height: 24,
+        backgroundColor: '#2ECC71',
+        borderRadius: 12,
+        borderWidth: 3,
+        borderColor: '#fff',
+    },
+    ageThumbTouchArea: {
+        position: 'absolute',
+        width: 44,
+        height: 44,
+        marginLeft: -22,
+        top: -2,
+        justifyContent: 'center',
+        alignItems: 'center',
+        // backgroundColor: 'rgba(255,0,0,0.2)', // Uncomment for debugging
+    },
+    ageLabels: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginTop: 5,
+    },
+    ageLabel: {
+        color: '#fff',
+        fontSize: 16,
+        fontWeight: '600',
+    },
+    ageButtonsRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginTop: 15,
+    },
+    ageButton: {
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        paddingVertical: 8,
+        paddingHorizontal: 15,
+        borderRadius: 8,
+    },
+    ageButtonText: {
+        color: '#fff',
+        fontSize: 13,
+    },
+    filterToggleRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255,255,255,0.1)',
+    },
+    toggleTrack: {
+        width: 52,
+        height: 32,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        borderRadius: 16,
+        justifyContent: 'center',
+        padding: 3,
+    },
+    toggleTrackActive: {
+        backgroundColor: '#2ECC71',
+    },
+    toggleThumb: {
+        width: 26,
+        height: 26,
+        backgroundColor: '#fff',
+        borderRadius: 13,
+    },
+    toggleThumbActive: {
+        alignSelf: 'flex-end',
+    },
+    filterRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255,255,255,0.08)',
+    },
+    filterIcon: {
+        fontSize: 20,
+        marginRight: 14,
+        width: 28,
+        textAlign: 'center',
+    },
+    filterOptionName: {
+        flex: 1,
+        color: '#fff',
+        fontSize: 15,
+    },
+    filterValue: {
+        color: 'rgba(255,255,255,0.5)',
+        fontSize: 14,
     },
 });
 

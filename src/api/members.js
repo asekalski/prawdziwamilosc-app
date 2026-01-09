@@ -1,7 +1,7 @@
 import client from './client';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export const getMembers = async (page = 1, per_page = 20, search = '') => {
+export const getMembers = async (page = 1, per_page = 20, search = '', min_age = null, max_age = null) => {
     try {
         // Sprawdź czy user jest zalogowany
         const token = await AsyncStorage.getItem('userToken');
@@ -9,13 +9,19 @@ export const getMembers = async (page = 1, per_page = 20, search = '') => {
             throw new Error('Nie jesteś zalogowany');
         }
 
+        const params = {
+            page,
+            per_page,
+            search,
+            populate_extras: true,
+            type: 'active', // Ensure we get active members
+        };
+
+        if (min_age) params.min_age = min_age;
+        if (max_age) params.max_age = max_age;
+
         const response = await client.get('/buddypress/v1/members', {
-            params: {
-                page,
-                per_page,
-                search,
-                populate_extras: true,
-            },
+            params
         });
         return response.data;
     } catch (error) {
