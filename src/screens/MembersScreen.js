@@ -36,10 +36,10 @@ const FILTER_OPTIONS = [
 ];
 
 const FILTER_VALUES = {
-    faith: ['Wierzący', 'Ateista', 'Duchowy', 'Inne'],
+    faith: ['Wierzący', 'Niewierzący'],
     politics: ['Konserwatywne', 'Liberalne', 'Centrowe', 'Apolityczny'],
-    work: ['Korporacja', 'Własny Biznes', 'Normalna Praca', 'Praca Kreatywna', 'Nie pracuję'],
-    diet: ['Wszystkożerca', 'Wegetarianin', 'Weganin', 'Keto/Inne']
+    work: ['Stabilna', 'Przedsiębiorca', 'Freelancerka', 'Korpo', 'Start-up', 'Artysta (praca kreatywna)', 'Twórca Internetowy', 'Właściciel', 'Naukowa'],
+    diet: ['Vege', 'Mięso', 'Inna']
 };
 
 const MembersScreen = () => {
