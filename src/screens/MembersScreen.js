@@ -480,7 +480,7 @@ const MembersScreen = () => {
                         ) : null}
                         <View style={styles.statusContainer}>
                             <View style={styles.statusDot} />
-                            <Text style={styles.statusText}>Active today</Text>
+                            <Text style={styles.statusText}>{item.last_activity || 'Nieznana aktywność'}</Text>
                         </View>
                     </View>
                 </TouchableOpacity>
