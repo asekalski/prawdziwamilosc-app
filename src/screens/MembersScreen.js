@@ -57,6 +57,7 @@ const MembersScreen = () => {
     const [showFiltersModal, setShowFiltersModal] = useState(false);
     const [ageRange, setAgeRange] = useState({ min: 18, max: 65 });
     const [hasBio, setHasBio] = useState(false);
+    const [showNumerology, setShowNumerology] = useState(false);
     const [extendedFilters, setExtendedFilters] = useState({
         faith: '',
         politics: '',
@@ -87,6 +88,9 @@ const MembersScreen = () => {
                             diet: filters.diet || ''
                         });
                     }
+                    if (typeof filters.showNumerology !== 'undefined') {
+                        setShowNumerology(filters.showNumerology);
+                    }
                     console.log('Filters loaded from AsyncStorage:', filters);
                 }
             } catch (error) {
@@ -105,6 +109,7 @@ const MembersScreen = () => {
                 ageMin: ageRange.min.toString(),
                 ageMax: ageRange.max.toString(),
                 hasBio: hasBio,
+                showNumerology: showNumerology,
                 ...extendedFilters
             };
             await AsyncStorage.setItem('pmFilters', JSON.stringify(filters));
@@ -443,14 +448,10 @@ const MembersScreen = () => {
     const renderItem = ({ item }) => {
         const zodiac = item.zodiac || zodiacCache[item.id] || getField(item, 303); // Prefer item.zodiac from API
         const age = item.age || calculateAge(getField(item, 107)); // Prefer item.age from API
-        const zodiacIcon = getZodiacIcon(zodiac);
+        const zodiacIcon = getZodiacIcon(item.zodiac);
 
-        // Get the best available image - prefer high-res from WordPress media library
         const imageUrl = item.hires_avatar?.large || item.hires_avatar?.full || item.avatar_urls?.full;
 
-        // DEBUG
-        // console.log('User:', item.name, 'Zodiac:', zodiac, 'Has xprofile:', !!item.xprofile);
-        console.log('Image URL:', imageUrl, 'HiRes:', item.hires_avatar);
 
         return (
             <View style={styles.cardContainer}>
@@ -460,13 +461,6 @@ const MembersScreen = () => {
                     style={styles.imageContainer}
                 >
                     <Image source={{ uri: imageUrl }} style={styles.cardImage} resizeMode="cover" />
-
-                    {zodiac && (
-                        <View style={styles.zodiacBadge}>
-                            <Text style={styles.zodiacIcon}>{zodiacIcon}</Text>
-                            <Text style={styles.zodiacName}>{zodiac}</Text>
-                        </View>
-                    )}
 
                     {/* Name and status overlay at bottom of image */}
                     <View style={styles.cardOverlay}>
@@ -481,6 +475,35 @@ const MembersScreen = () => {
                         <View style={styles.statusContainer}>
                             <View style={styles.statusDot} />
                             <Text style={styles.statusText}>{item.last_activity || 'Nieznana aktywność'}</Text>
+                        </View>
+
+                        {/* Profile Tags */}
+                        <View style={styles.profileTagsContainer}>
+                            {item.faith && (
+                                <View style={styles.profileTag}>
+                                    <Text style={styles.profileTagText}>{item.faith}</Text>
+                                </View>
+                            )}
+                            {item.work && (
+                                <View style={styles.profileTag}>
+                                    <Text style={styles.profileTagText}>{item.work}</Text>
+                                </View>
+                            )}
+                            {item.diet && (
+                                <View style={styles.profileTag}>
+                                    <Text style={styles.profileTagText}>{item.diet}</Text>
+                                </View>
+                            )}
+                            {showNumerology && item.numerology && (
+                                <View style={[styles.profileTag, styles.numerologyTag]}>
+                                    <Text style={[styles.profileTagText, styles.numerologyTagText]}>{item.numerology}</Text>
+                                </View>
+                            )}
+                            {item.zodiac_sign ? (
+                                <View style={[styles.profileTag, styles.zodiacTag]}>
+                                    <Text style={styles.profileTagText}>{item.zodiac_sign}</Text>
+                                </View>
+                            ) : null}
                         </View>
                     </View>
                 </TouchableOpacity>
@@ -516,6 +539,7 @@ const MembersScreen = () => {
             min: 18,
             max: 65,
             hasBio: false,
+            showNumerology: false,
             faith: '',
             politics: '',
             work: '',
@@ -525,6 +549,7 @@ const MembersScreen = () => {
         // Update State
         setAgeRange({ min: defaults.min, max: defaults.max });
         setHasBio(defaults.hasBio);
+        setShowNumerology(defaults.showNumerology);
         setExtendedFilters({
             faith: defaults.faith,
             politics: defaults.politics,
@@ -538,6 +563,7 @@ const MembersScreen = () => {
                 ageMin: defaults.min.toString(),
                 ageMax: defaults.max.toString(),
                 hasBio: defaults.hasBio,
+                showNumerology: defaults.showNumerology,
                 faith: defaults.faith,
                 politics: defaults.politics,
                 work: defaults.work,
@@ -784,6 +810,17 @@ const MembersScreen = () => {
                             </View>
                         </TouchableOpacity>
 
+                        {/* Show Numerology Toggle */}
+                        <TouchableOpacity
+                            style={styles.filterToggleRow}
+                            onPress={() => setShowNumerology(!showNumerology)}
+                        >
+                            <Text style={styles.filterOptionName}>Pokaż Numerologię</Text>
+                            <View style={[styles.toggleTrack, showNumerology && styles.toggleTrackActive]}>
+                                <View style={[styles.toggleThumb, showNumerology && styles.toggleThumbActive]} />
+                            </View>
+                        </TouchableOpacity>
+
                         {/* Filter Options List */}
                         {/* Custom Filters: Faith, Politics, Work, Diet */}
                         {[
@@ -898,7 +935,7 @@ const styles = StyleSheet.create({
         right: 0,
         paddingHorizontal: 20,
         paddingVertical: 20,
-        paddingBottom: 50,
+        paddingBottom: 55,
         backgroundColor: 'rgba(0, 0, 0, 0.4)',
     },
     zodiacBadge: {
@@ -927,6 +964,59 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         color: '#000',
     },
+    numerologyBadge: {
+        position: 'absolute',
+        top: 15,
+        right: 15,
+        backgroundColor: '#ffc107',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 20,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 4,
+        elevation: 5,
+        zIndex: 10,
+    },
+    numerologyText: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#333',
+    },
+    profileTagsContainer: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        marginTop: 5,
+        justifyContent: 'flex-start',
+        alignItems: 'center',
+    },
+    profileTag: {
+        backgroundColor: 'rgba(255, 255, 255, 0.15)',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 15,
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.3)',
+        marginRight: 6,
+        marginBottom: 6,
+    },
+    profileTagText: {
+        color: '#fff',
+        fontSize: 11,
+        fontWeight: '500',
+    },
+    numerologyTag: {
+        backgroundColor: 'rgba(255, 193, 7, 0.3)',
+        borderColor: '#ffc107',
+    },
+    numerologyTagText: {
+        color: '#ffc107',
+    },
+    zodiacTag: {
+        backgroundColor: 'rgba(212, 175, 55, 0.2)',
+        borderColor: '#d4af37',
+    },
     statusContainer: { flexDirection: 'row', alignItems: 'center', marginTop: 5 },
     statusDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#2ECC71', marginRight: 5 },
     statusText: { color: '#2ECC71', fontWeight: '600' },
@@ -949,7 +1039,7 @@ const styles = StyleSheet.create({
     actionButtonsContainer: {
         flexDirection: 'row',
         justifyContent: 'space-evenly',
-        marginTop: -30, // Overlap the image slightly or just below
+        marginTop: -20, // Overlap the image slightly or just below
         paddingHorizontal: 20,
     },
     actionButton: {

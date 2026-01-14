@@ -1,47 +1,47 @@
 import React, { useState, useCallback } from 'react';
 import { View, Text, FlatList, StyleSheet, Image, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native';
-import { getMatches } from '../api/members';
+import { getLikesMeUsers } from '../api/members';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const MatchesScreen = () => {
-    const [matches, setMatches] = useState([]);
+    const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
     const navigation = useNavigation();
     const insets = useSafeAreaInsets();
 
-    const fetchMatches = async (isRefresh = false) => {
+    const fetchLikesMe = async (isRefresh = false) => {
         if (isRefresh) {
             setRefreshing(true);
         } else {
             setLoading(true);
         }
         try {
-            // Fetch actual mutual matches from custom endpoint
-            const data = await getMatches();
-            console.log('Matches fetched:', data);
-            console.log('Number of matches:', data?.length || 0);
-            setMatches(data || []);
+            // Fetch users who liked me
+            const data = await getLikesMeUsers();
+            console.log('Likes me fetched:', data);
+            console.log('Number of likes:', data?.length || 0);
+            setUsers(data || []);
         } catch (error) {
-            console.error('Error fetching matches:', error);
+            console.error('Error fetching likes me:', error);
         } finally {
             setLoading(false);
             setRefreshing(false);
         }
     };
 
-    // Refresh matches when screen comes into focus
+    // Refresh when screen comes into focus
     useFocusEffect(
         useCallback(() => {
-            console.log('MatchesScreen focused - fetching matches...');
-            fetchMatches();
+            console.log('LikesMeScreen focused - fetching likes...');
+            fetchLikesMe();
         }, [])
     );
 
     const onRefresh = () => {
-        fetchMatches(true);
+        fetchLikesMe(true);
     };
 
     const renderItem = ({ item }) => {
@@ -59,7 +59,7 @@ const MatchesScreen = () => {
                     <Text style={styles.name}>{item.name}</Text>
                     <View style={styles.statusRow}>
                         <View style={styles.statusDot} />
-                        <Text style={styles.statusText}>New Match!</Text>
+                        <Text style={styles.statusText}>Lubi Twój profil! ❤️</Text>
                     </View>
                 </View>
                 <TouchableOpacity
@@ -81,23 +81,23 @@ const MatchesScreen = () => {
     return (
         <View style={[styles.container, { paddingTop: insets.top }]}>
             <View style={styles.header}>
-                <Text style={styles.headerTitle}>Matches</Text>
+                <Text style={styles.headerTitle}>Lubią Mnie</Text>
                 <Text style={styles.headerSubtitle}>
-                    {matches.length} {matches.length === 1 ? 'match' : 'matches'}
+                    {users.length} {users.length === 1 ? 'osoba' : 'osób'}
                 </Text>
             </View>
 
             {loading ? (
-                <ActivityIndicator size="large" color="#2ECC71" style={styles.loader} />
-            ) : matches.length === 0 ? (
+                <ActivityIndicator size="large" color="#E91E63" style={styles.loader} />
+            ) : users.length === 0 ? (
                 <View style={styles.emptyContainer}>
                     <Ionicons name="heart-outline" size={64} color="#ccc" />
-                    <Text style={styles.emptyText}>No matches yet</Text>
-                    <Text style={styles.emptySubtext}>Keep swiping to find your match!</Text>
+                    <Text style={styles.emptyText}>Nikt jeszcze nie polubił Ciebie</Text>
+                    <Text style={styles.emptySubtext}>Uzupełnij swój profil, aby zwiększyć szanse!</Text>
                 </View>
             ) : (
                 <FlatList
-                    data={matches}
+                    data={users}
                     renderItem={renderItem}
                     keyExtractor={item => item.id.toString()}
                     contentContainerStyle={styles.listContent}
@@ -106,7 +106,7 @@ const MatchesScreen = () => {
                         <RefreshControl
                             refreshing={refreshing}
                             onRefresh={onRefresh}
-                            tintColor="#2ECC71"
+                            tintColor="#E91E63"
                         />
                     }
                 />

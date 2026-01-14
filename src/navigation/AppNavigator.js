@@ -20,6 +20,24 @@ const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
 
 const MainTabNavigator = () => {
+    const [likesCount, setLikesCount] = React.useState(0);
+
+    React.useEffect(() => {
+        const fetchLikesCount = async () => {
+            try {
+                const { getLikesMeUsers } = require('../api/members');
+                const data = await getLikesMeUsers();
+                setLikesCount(Array.isArray(data) ? data.length : 0);
+            } catch (error) {
+                console.log('Error fetching likes count:', error);
+            }
+        };
+        fetchLikesCount();
+        // Refresh every 60 seconds
+        const interval = setInterval(fetchLikesCount, 60000);
+        return () => clearInterval(interval);
+    }, []);
+
     return (
         <Tab.Navigator
             screenOptions={{
@@ -44,11 +62,13 @@ const MainTabNavigator = () => {
                 }}
             />
             <Tab.Screen
-                name="Matches"
+                name="LikesMe"
                 component={MatchesScreen}
                 options={{
-                    tabBarLabel: 'Matches',
-                    tabBarIcon: ({ color, size }) => <Ionicons name="heart" size={size} color={color} />
+                    tabBarLabel: 'Lubią Mnie',
+                    tabBarIcon: ({ color, size }) => <Ionicons name="heart" size={size} color={color} />,
+                    tabBarBadge: likesCount > 0 ? (likesCount > 99 ? '99+' : likesCount) : undefined,
+                    tabBarBadgeStyle: likesCount > 0 ? { backgroundColor: '#ffc107', color: '#333' } : undefined,
                 }}
             />
             <Tab.Screen
