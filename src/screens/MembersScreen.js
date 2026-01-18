@@ -2,16 +2,19 @@ import React, { useState, useEffect, useContext, useRef } from 'react';
 import { View, Text, FlatList, StyleSheet, TextInput, ActivityIndicator, Image, TouchableOpacity, Dimensions, Alert, SafeAreaView, ScrollView, Modal, Animated, PanResponder } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getMembers, getXProfileGroups, getMember, toggleLike, getLikedUsers, getLikesMeUsers, getMatches } from '../api/members';
+import { addSkippedUser } from '../api/skipped';
+import { getSuperMessageStatus } from '../api/superMessages';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '@react-navigation/native';
 import { Ionicons, FontAwesome5, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AuthContext } from '../context/AuthContext';
+import SuperMessageModal from '../components/SuperMessageModal';
 
 const TABS = [
     { id: 'search', label: 'Wyszukaj' },
-    { id: 'liked', label: 'Polubieni' },
-    { id: 'likesMe', label: 'Lubią Mnie' },
+    { id: 'liked', label: 'Polubieni', hasPremiumBadge: true },
+    { id: 'likesMe', label: 'Lubią Mnie', hasPremiumBadge: true },
     { id: 'matches', label: 'Matche' },
 ];
 
@@ -66,6 +69,24 @@ const MembersScreen = () => {
     });
     const [activeFilterId, setActiveFilterId] = useState(null); // For accordion
     const [filtersLoaded, setFiltersLoaded] = useState(false);
+
+    // Super Message modal state
+    const [showSuperMessageModal, setShowSuperMessageModal] = useState(false);
+    const [superMessageRecipient, setSuperMessageRecipient] = useState(null);
+    const [isPremium, setIsPremium] = useState(false);
+
+    // Check premium status on mount
+    useEffect(() => {
+        const checkPremiumStatus = async () => {
+            try {
+                const status = await getSuperMessageStatus();
+                setIsPremium(status?.is_premium ?? false);
+            } catch (error) {
+                console.log('Could not check premium status');
+            }
+        };
+        checkPremiumStatus();
+    }, []);
 
     // Load saved filters from AsyncStorage on component mount
     useEffect(() => {
@@ -445,6 +466,16 @@ const MembersScreen = () => {
         return zodiacMap[zodiacName] || '⭐';
     };
 
+    const handleSkip = async (userId) => {
+        try {
+            await addSkippedUser(userId);
+            // Remove user from the list
+            setMembers(prev => prev.filter(m => m.id !== userId));
+        } catch (error) {
+            console.error('Failed to skip user:', error);
+        }
+    };
+
     const renderItem = ({ item }) => {
         const zodiac = item.zodiac || zodiacCache[item.id] || getField(item, 303); // Prefer item.zodiac from API
         const age = item.age || calculateAge(getField(item, 107)); // Prefer item.age from API
@@ -512,7 +543,10 @@ const MembersScreen = () => {
                     <TouchableOpacity style={[styles.actionButton, { backgroundColor: '#fff' }]}>
                         <MaterialCommunityIcons name="reload" size={24} color="#F5B041" />
                     </TouchableOpacity>
-                    <TouchableOpacity style={[styles.actionButton, { backgroundColor: '#fff' }]}>
+                    <TouchableOpacity
+                        style={[styles.actionButton, { backgroundColor: '#fff' }]}
+                        onPress={() => handleSkip(item.id)}
+                    >
                         <Ionicons name="close" size={30} color="#E74C3C" />
                     </TouchableOpacity>
                     <TouchableOpacity
@@ -526,8 +560,15 @@ const MembersScreen = () => {
                             color={likedUsers[item.id] ? '#fff' : '#2ECC71'}
                         />
                     </TouchableOpacity>
-                    <TouchableOpacity style={[styles.actionButton, { backgroundColor: '#fff' }]}>
-                        <Ionicons name="star" size={24} color="#3498DB" />
+                    <TouchableOpacity
+                        style={[styles.actionButton, styles.superMessageButton]}
+                        onPress={() => {
+                            setSuperMessageRecipient(item);
+                            setShowSuperMessageModal(true);
+                        }}
+                    >
+                        <Ionicons name="mail" size={20} color="#FFD700" />
+                        <Text style={styles.superMessagePremiumLabel}>Premium</Text>
                     </TouchableOpacity>
                 </View>
             </View >
@@ -605,10 +646,17 @@ const MembersScreen = () => {
                     <View style={styles.notificationDot} />
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => navigation.navigate('UserProfile', { userId: 'me' })}>
-                    <Image
-                        source={{ uri: currentUserAvatar || 'https://via.placeholder.com/40' }}
-                        style={styles.headerAvatar}
-                    />
+                    <View style={styles.avatarContainer}>
+                        <Image
+                            source={{ uri: currentUserAvatar || 'https://via.placeholder.com/40' }}
+                            style={styles.headerAvatar}
+                        />
+                        {isPremium && (
+                            <View style={styles.avatarPremiumBadge}>
+                                <Text style={styles.avatarPremiumText}>⭐</Text>
+                            </View>
+                        )}
+                    </View>
                 </TouchableOpacity>
             </View>
 
@@ -634,6 +682,9 @@ const MembersScreen = () => {
                             ]}>
                                 {tab.label}
                             </Text>
+                            {tab.hasPremiumBadge && (
+                                <Text style={styles.premiumBadgeText}>PREMIUM</Text>
+                            )}
                             {activeTab === tab.id && <View style={styles.tabIndicator} />}
                         </TouchableOpacity>
                     ))}
@@ -898,6 +949,17 @@ const MembersScreen = () => {
                     </ScrollView>
                 </View>
             </Modal>
+
+            {/* Super Message Modal */}
+            <SuperMessageModal
+                visible={showSuperMessageModal}
+                recipientId={superMessageRecipient?.id}
+                recipientName={superMessageRecipient?.name}
+                onClose={() => {
+                    setShowSuperMessageModal(false);
+                    setSuperMessageRecipient(null);
+                }}
+            />
         </View>
     );
 };
@@ -906,6 +968,25 @@ const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#2C2C2E' }, // Dark charcoal background
     header: { flexDirection: 'row', paddingHorizontal: 20, paddingBottom: 10, alignItems: 'center' },
     headerButton: { padding: 10, backgroundColor: '#3A3A3C', borderRadius: 15, marginRight: 10 }, // Darker grey for buttons
+    avatarContainer: {
+        position: 'relative',
+    },
+    avatarPremiumBadge: {
+        position: 'absolute',
+        bottom: -2,
+        right: -2,
+        backgroundColor: '#1a1a2e',
+        borderRadius: 10,
+        width: 18,
+        height: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: '#FFD700',
+    },
+    avatarPremiumText: {
+        fontSize: 10,
+    },
     headerAvatar: { width: 40, height: 40, borderRadius: 20, borderWidth: 2, borderColor: '#fff' },
     notificationDot: { position: 'absolute', top: 10, right: 10, width: 8, height: 8, borderRadius: 4, backgroundColor: '#FF4757', borderWidth: 1, borderColor: '#3A3A3C' },
     listContent: { paddingBottom: 100 },
@@ -1054,6 +1135,33 @@ const styles = StyleSheet.create({
         shadowRadius: 5,
         elevation: 5,
     },
+    superMessageButton: {
+        backgroundColor: '#1a1a2e',
+        borderWidth: 2,
+        borderColor: '#FFD700',
+    },
+    superMessageButtonText: {
+        fontSize: 24,
+    },
+    superMessagePremiumLabel: {
+        fontSize: 7,
+        fontWeight: '700',
+        color: '#FFD700',
+        marginTop: 1,
+    },
+    premiumTabItem: {
+        backgroundColor: '#1a1a2e',
+        borderWidth: 2,
+        borderColor: '#FFD700',
+        borderRadius: 20,
+        paddingHorizontal: 16,
+        paddingVertical: 6,
+        marginHorizontal: 4,
+    },
+    premiumTabLabel: {
+        fontSize: 18,
+        color: '#FFD700',
+    },
     // Tab Bar Styles
     tabBar: {
         backgroundColor: '#2C2C2E',
@@ -1071,6 +1179,7 @@ const styles = StyleSheet.create({
         paddingVertical: 8,
         marginRight: 4,
         position: 'relative',
+        alignItems: 'center',
     },
     tabItemActive: {},
     tabLabel: {
@@ -1081,6 +1190,12 @@ const styles = StyleSheet.create({
     tabLabelActive: {
         color: '#FFFFFF',
         fontWeight: '700',
+    },
+    premiumBadgeText: {
+        fontSize: 8,
+        fontWeight: '700',
+        color: '#FFD700',
+        marginTop: 2,
     },
     tabIndicator: {
         position: 'absolute',

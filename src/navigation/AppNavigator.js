@@ -12,6 +12,7 @@ import MatchesScreen from '../screens/MatchesScreen';
 import MessagesScreen from '../screens/MessagesScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import ChatScreen from '../screens/ChatScreen';
+import SkippedScreen from '../screens/SkippedScreen';
 import { Ionicons } from '@expo/vector-icons';
 
 import NewMessageScreen from '../screens/NewMessageScreen';
@@ -69,6 +70,14 @@ const MainTabNavigator = () => {
                     tabBarIcon: ({ color, size }) => <Ionicons name="heart" size={size} color={color} />,
                     tabBarBadge: likesCount > 0 ? (likesCount > 99 ? '99+' : likesCount) : undefined,
                     tabBarBadgeStyle: likesCount > 0 ? { backgroundColor: '#ffc107', color: '#333' } : undefined,
+                }}
+            />
+            <Tab.Screen
+                name="Skipped"
+                component={SkippedScreen}
+                options={{
+                    tabBarLabel: 'Usunięci',
+                    tabBarIcon: ({ color, size }) => <Ionicons name="trash" size={size} color={color} />
                 }}
             />
             <Tab.Screen
