@@ -15,10 +15,11 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.prawdziwamilosc.app",
-      "buildNumber": "1",
+      "buildNumber": "2",
       "infoPlist": {
         "NSCameraUsageDescription": "Aplikacja potrzebuje dostępu do aparatu, aby umożliwić Ci zrobienie zdjęcia do profilu.",
-        "NSPhotoLibraryUsageDescription": "Aplikacja potrzebuje dostępu do galerii, aby umożliwić Ci wybór zdjęcia do profilu."
+        "NSPhotoLibraryUsageDescription": "Aplikacja potrzebuje dostępu do galerii, aby umożliwić Ci wybór zdjęcia do profilu.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -51,6 +52,11 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "scheme": "prawdziwamilosc"
+    "scheme": "prawdziwamilosc",
+    "extra": {
+      "eas": {
+        "projectId": "e3933989-269c-46bc-a273-d6d477e458c3"
+      }
+    }
   }
 }
