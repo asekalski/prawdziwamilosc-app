@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { View, Text, StyleSheet, Image, ActivityIndicator, ScrollView, Alert, TextInput, Modal, FlatList, Pressable } from 'react-native';
-import { getMember, getXProfileGroups, updateXProfileField, updateMemberName } from '../api/members';
+import { getMember, updateXProfileField, updateMemberName, deleteAccount } from '../api/members';
 import { getThreads } from '../api/messages';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme, useNavigation } from '@react-navigation/native';
@@ -13,6 +13,7 @@ const ProfileScreen = ({ route }) => {
     const [member, setMember] = useState(null);
     const [loading, setLoading] = useState(true);
     const [messageLoading, setMessageLoading] = useState(false);
+    const [deletingAccount, setDeletingAccount] = useState(false);
     const [editingFieldId, setEditingFieldId] = useState(null);
     const [editingValue, setEditingValue] = useState('');
     const [savingFieldId, setSavingFieldId] = useState(null);
@@ -29,15 +30,7 @@ const ProfileScreen = ({ route }) => {
             setLoading(true);
             try {
                 const data = await getMember(userId);
-
-                // Fetch complete xprofile data separately
-                try {
-                    const xprofileGroups = await getXProfileGroups(userId);
-                    data.xprofile = { groups: xprofileGroups };
-                } catch (xprofileError) {
-                    console.log('XProfile fetch failed, using member data:', xprofileError);
-                }
-
+                // getMember now includes full xprofile data from /sk/v1/member/{id} endpoint
                 setMember(data);
             } catch (error) {
                 console.error(error);
@@ -356,6 +349,73 @@ const ProfileScreen = ({ route }) => {
                         </View>
                     )
                     )}
+
+                    {/* Delete Account Section - Required by Apple */}
+                    {isOwnProfile && (
+                        <View style={styles.dangerZone}>
+                            <Text style={styles.dangerZoneTitle}>STREFA NIEBEZPIECZNA</Text>
+                            <TouchableOpacity
+                                style={[styles.deleteAccountButton, deletingAccount && { opacity: 0.6 }]}
+                                disabled={deletingAccount}
+                                onPress={() => {
+                                    Alert.alert(
+                                        'Usuń moje konto',
+                                        'Czy na pewno chcesz usunąć swoje konto?\n\n⚠️ UWAGA: Ta operacja jest nieodwracalna!\n\nZostaną usunięte:\n• Wszystkie Twoje dane profilowe\n• Historia konwersacji i wiadomości\n• Polubienia i matche\n• Wszystkie przesłane zdjęcia\n\nNie będzie możliwości odzyskania tych danych.',
+                                        [
+                                            {
+                                                text: 'Anuluj',
+                                                style: 'cancel'
+                                            },
+                                            {
+                                                text: 'Usuń konto',
+                                                style: 'destructive',
+                                                onPress: () => {
+                                                    Alert.alert(
+                                                        'Ostatnie potwierdzenie',
+                                                        'Czy na pewno chcesz NIEODWRACALNIE usunąć swoje konto? Tej operacji nie można cofnąć.',
+                                                        [
+                                                            { text: 'Anuluj', style: 'cancel' },
+                                                            {
+                                                                text: 'TAK, USUŃ',
+                                                                style: 'destructive',
+                                                                onPress: async () => {
+                                                                    setDeletingAccount(true);
+                                                                    try {
+                                                                        await deleteAccount();
+                                                                        Alert.alert(
+                                                                            'Konto usunięte',
+                                                                            'Twoje konto zostało pomyślnie usunięte. Otrzymasz email z potwierdzeniem.',
+                                                                            [{ text: 'OK', onPress: logout }]
+                                                                        );
+                                                                    } catch (error) {
+                                                                        console.error('Delete account error:', error);
+                                                                        Alert.alert(
+                                                                            'Błąd',
+                                                                            'Nie udało się usunąć konta. Spróbuj ponownie później lub skontaktuj się z pomocą techniczną.'
+                                                                        );
+                                                                        setDeletingAccount(false);
+                                                                    }
+                                                                }
+                                                            }
+                                                        ]
+                                                    );
+                                                }
+                                            }
+                                        ]
+                                    );
+                                }}
+                            >
+                                {deletingAccount ? (
+                                    <ActivityIndicator size="small" color="#FF3B30" style={{ marginRight: 10 }} />
+                                ) : (
+                                    <Ionicons name="trash-outline" size={20} color="#FF3B30" style={{ marginRight: 10 }} />
+                                )}
+                                <Text style={styles.deleteAccountText}>
+                                    {deletingAccount ? 'Usuwanie...' : 'Usuń moje konto'}
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
                 </View>
             </ScrollView>
 
@@ -650,6 +710,41 @@ const styles = StyleSheet.create({
     optionTextSelected: {
         color: '#E8B4B8',
         fontWeight: '700',
+    },
+
+    // Danger Zone - Delete Account section
+    dangerZone: {
+        marginTop: 30,
+        marginBottom: 20,
+        backgroundColor: 'rgba(255, 59, 48, 0.08)',
+        borderRadius: 20,
+        padding: 20,
+        borderWidth: 1,
+        borderColor: 'rgba(255, 59, 48, 0.2)',
+    },
+    dangerZoneTitle: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#FF3B30',
+        marginBottom: 15,
+        letterSpacing: 2,
+        textTransform: 'uppercase',
+    },
+    deleteAccountButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(255, 59, 48, 0.15)',
+        paddingVertical: 16,
+        paddingHorizontal: 24,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: 'rgba(255, 59, 48, 0.3)',
+    },
+    deleteAccountText: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#FF3B30',
     },
 });
 

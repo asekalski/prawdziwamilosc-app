@@ -4,12 +4,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getMembers, getXProfileGroups, getMember, toggleLike, getLikedUsers, getLikesMeUsers, getMatches } from '../api/members';
 import { addSkippedUser, getSkippedUsers, removeSkippedUser, getSkippedUserIds } from '../api/skipped';
 import { getSuperMessageStatus } from '../api/superMessages';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '@react-navigation/native';
 import { Ionicons, FontAwesome5, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AuthContext } from '../context/AuthContext';
 import SuperMessageModal from '../components/SuperMessageModal';
+import HeartLoader from '../components/HeartLoader';
 
 // Helpers
 const stripHtml = (str) => {
@@ -124,7 +125,7 @@ const FILTER_VALUES = {
     diet: ['Vege', 'Mięso', 'Inna']
 };
 
-const MembersScreen = () => {
+const MembersScreen = ({ route }) => {
     const [members, setMembers] = useState([]);
     const [loading, setLoading] = useState(false);
     const [page, setPage] = useState(1);
@@ -132,8 +133,15 @@ const MembersScreen = () => {
     const [zodiacCache, setZodiacCache] = useState({}); // Cache zodiac data by user ID
     const [currentUserAvatar, setCurrentUserAvatar] = useState(null);
     const [likedUsers, setLikedUsers] = useState({}); // Track liked users { userId: true/false }
-    const [activeTab, setActiveTab] = useState('search'); // Tab navigation state
+    const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'search'); // Tab navigation state
     const [hasMore, setHasMore] = useState(true); // Track if there are more results to load
+
+    // Update active tab when params change
+    useEffect(() => {
+        if (route?.params?.initialTab) {
+            setActiveTab(route.params.initialTab);
+        }
+    }, [route?.params?.initialTab]);
 
     // Filter modal state
     const [showFiltersModal, setShowFiltersModal] = useState(false);
@@ -367,11 +375,11 @@ const MembersScreen = () => {
             let data = [];
 
             // Helper for fetching full profile details
+            // Backend endpoints now return full xprofile data, so we just map the data directly
             const fetchFullDetails = async (users) => {
                 if (!users || users.length === 0) return [];
-                const promises = users.map(u => getMember(u.id).catch(e => u));
-                const rawData = await Promise.all(promises);
-                return rawData.map(mapUserProfile);
+                // No need for additional getMember calls - backend now provides all data
+                return users.map(mapUserProfile);
             };
 
             switch (tabId) {
@@ -383,109 +391,9 @@ const MembersScreen = () => {
                     data = (data || []).filter(member => !likedIds.has(member.id));
                     break;
                 case 'liked':
+                    // Backend now returns full xprofile data, no need for additional getMember calls
                     const simpleLiked = await getLikedUsers();
-                    // Fetch full details for each liked user to ensure we have xprofile fields (bio, tags, etc.)
-                    if (simpleLiked && simpleLiked.length > 0) {
-                        try {
-                            const fullDetailsPromises = simpleLiked.map(u => getMember(u.id).catch(e => {
-                                console.warn('Failed to fetch full details for', u.id, e);
-                                return u;
-                            }));
-                            const rawData = await Promise.all(fullDetailsPromises);
-
-                            // Map xprofile fields to top-level properties to match Search tab structure
-                            data = rawData.map(user => {
-                                if (!user.xprofile || !user.xprofile.groups) return user;
-
-                                // Create a map of fields by Name (lowercase) and ID
-                                const fieldMap = {};
-                                const fieldIdMap = {};
-
-                                for (const group of user.xprofile.groups) {
-                                    let fieldsArray = [];
-                                    if (Array.isArray(group.fields)) {
-                                        fieldsArray = group.fields;
-                                    } else if (group.fields && typeof group.fields === 'object') {
-                                        fieldsArray = Object.values(group.fields);
-                                    }
-
-                                    for (const field of fieldsArray) {
-                                        let val = null;
-                                        if (field.value && typeof field.value === 'object') {
-                                            val = field.value.rendered || field.value.raw;
-                                        } else {
-                                            val = field.value;
-                                        }
-
-                                        // Ensure val is not an object before storing
-                                        if (val && typeof val === 'object') {
-                                            if (val.date) val = val.date; // Extract date string from BP date object
-                                            else try { val = JSON.stringify(val); } catch (e) { val = String(val); }
-                                        }
-
-                                        if (field.name) {
-                                            fieldMap[field.name.toLowerCase()] = val;
-                                        }
-                                        if (field.id) {
-                                            fieldIdMap[field.id] = val;
-                                        }
-                                    }
-                                }
-
-                                // Helper to get val by ID or Name
-                                const getVal = (id, ...names) => {
-                                    if (fieldIdMap[id]) return fieldIdMap[id];
-                                    for (const name of names) {
-                                        const lowerName = name.toLowerCase();
-                                        if (fieldMap[lowerName]) return fieldMap[lowerName];
-                                        // STARTS WITH match to find "Podejście do wiary" but avoid "Visibility of..."
-                                        const foundKey = Object.keys(fieldMap).find(k => k.startsWith(lowerName));
-                                        if (foundKey) return fieldMap[foundKey];
-                                    }
-                                    return null;
-                                };
-
-                                // DEBUG: List all fields to find IDs
-                                let allFieldsInfo = "";
-                                if (user.xprofile && user.xprofile.groups) {
-                                    user.xprofile.groups.forEach(g => {
-                                        let fields = [];
-                                        if (Array.isArray(g.fields)) fields = g.fields;
-                                        else if (g.fields && typeof g.fields === 'object') fields = Object.values(g.fields);
-
-                                        fields.forEach(f => {
-                                            allFieldsInfo += `[${f.id}:${f.name}] `;
-                                        });
-                                    });
-                                }
-
-                                const stripHtml = (str) => {
-                                    if (!str) return '';
-                                    return String(str).replace(/<[^>]*>?/gm, '');
-                                };
-
-                                // User provided IDs: Bio(367), Faith(346), Politics(351), Work(356), Diet(362)
-                                const cleanBio = stripHtml(getVal(367) || user.bio || getVal('o mnie', 'opis'));
-
-                                return {
-                                    ...user,
-                                    bio: cleanBio,
-                                    faith: stripHtml(getVal(346, 'podejście do wiary', 'wyznanie')),
-                                    politics: stripHtml(getVal(351, 'poglądy polityczne')),
-                                    work: stripHtml(getVal(356, 'styl pracy', 'praca')),
-                                    diet: stripHtml(getVal(362, 'styl jedzenia', 'dieta')),
-                                    zodiac_sign: stripHtml(getVal(303, 'znak zodiaku', 'zodiak')),
-                                    // Calculate age if birthdate field (107) exists
-                                    age: user.age || calculateAge(getVal(107, 'data urodzenia', 'wiek', 'birthdate'))
-                                };
-                            });
-                        } catch (err) {
-                            console.error('Error fetching details for liked users:', err);
-                            data = simpleLiked;
-                        }
-                    } else {
-                        data = [];
-                    }
+                    data = simpleLiked && simpleLiked.length > 0 ? simpleLiked.map(mapUserProfile) : [];
                     break;
                 case 'likesMe':
                     {
@@ -966,9 +874,9 @@ const MembersScreen = () => {
                                     <Text style={[styles.profileTagText, styles.numerologyTagText]}>{item.numerology}</Text>
                                 </View>
                             )}
-                            {item.zodiac_sign ? (
+                            {zodiac ? (
                                 <View style={[styles.profileTag, styles.zodiacTag]}>
-                                    <Text style={styles.profileTagText}>{item.zodiac_sign}</Text>
+                                    <Text style={styles.profileTagText}>{zodiac}</Text>
                                 </View>
                             ) : null}
                         </View>
@@ -1140,16 +1048,26 @@ const MembersScreen = () => {
                 </View>
             )}
 
-            <FlatList
-                data={members}
-                renderItem={renderItem}
-                keyExtractor={item => item.id.toString()}
-                onEndReached={activeTab === 'search' ? handleLoadMore : null}
-                onEndReachedThreshold={0.3}
-                ListFooterComponent={loading ? <ActivityIndicator size="large" color="#FFFFFF" /> : null}
-                contentContainerStyle={styles.listContent}
-                showsVerticalScrollIndicator={false}
-            />
+            {/* Content Area with Loader Overlay */}
+            <View style={{ flex: 1, position: 'relative' }}>
+                <FlatList
+                    data={members}
+                    renderItem={renderItem}
+                    keyExtractor={item => item.id.toString()}
+                    onEndReached={activeTab === 'search' ? handleLoadMore : null}
+                    onEndReachedThreshold={0.3}
+                    ListFooterComponent={loading && members.length > 0 ? <ActivityIndicator size="small" color="#FF6B6B" style={{ marginVertical: 20 }} /> : null}
+                    contentContainerStyle={styles.listContent}
+                    showsVerticalScrollIndicator={false}
+                />
+
+                {/* Centered Heart Loading Animation */}
+                {loading && members.length === 0 && (
+                    <View style={styles.loaderContainer}>
+                        <HeartLoader size={60} color="#FF6B6B" />
+                    </View>
+                )}
+            </View>
 
             {/* Match Animation Modal */}
             <Modal
@@ -1403,6 +1321,12 @@ const MembersScreen = () => {
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#2C2C2E' }, // Dark charcoal background
+    loaderContainer: {
+        ...StyleSheet.absoluteFillObject,
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 10,
+    },
     header: { flexDirection: 'row', paddingHorizontal: 20, paddingBottom: 10, alignItems: 'center' },
     headerButton: { padding: 10, backgroundColor: '#3A3A3C', borderRadius: 15, marginRight: 10 }, // Darker grey for buttons
     avatarContainer: {
@@ -1647,15 +1571,7 @@ const styles = StyleSheet.create({
         borderRadius: 30,
         backgroundColor: '#ddd',
     },
-    zodiacTag: {
-        position: 'absolute',
-        top: 80, // Adjust based on layout
-        right: 20,
-        backgroundColor: 'rgba(0,0,0,0.6)',
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 20,
-    },
+
     zodiacText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
     actionButtonsContainer: {
         flexDirection: 'row',
@@ -1763,6 +1679,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#FF6B9D',
         borderRadius: 2,
     },
+
     emptyState: {
         flex: 1,
         justifyContent: 'center',

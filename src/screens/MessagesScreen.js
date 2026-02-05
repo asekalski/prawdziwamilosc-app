@@ -103,7 +103,8 @@ const MessagesScreen = () => {
         // console.log('Participants:', thread.participants);
         // console.log('UserInfo ID:', userInfo?.id);
 
-        // Get participant names (excluding current user)
+        // Get participant names (excluding current user) and their avatar
+        let participantAvatar = null;
         const participantNames = thread.participants
             ? thread.participants
                 .map(p => {
@@ -112,6 +113,10 @@ const MessagesScreen = () => {
                     if (userInfo?.id && userId == userInfo.id) return null;
 
                     const user = users[userId];
+                    // Get avatar from first non-current-user participant
+                    if (user && !participantAvatar) {
+                        participantAvatar = user.avatar || null;
+                    }
                     return user ? user.name : null;
                 })
                 .filter(Boolean)
@@ -132,7 +137,14 @@ const MessagesScreen = () => {
                 activeOpacity={0.7}
             >
                 <View style={styles.iconContainer}>
-                    <Ionicons name="chatbubble-ellipses" size={24} color="#2ECC71" />
+                    {participantAvatar ? (
+                        <Image
+                            source={{ uri: participantAvatar }}
+                            style={styles.avatarImage}
+                        />
+                    ) : (
+                        <Ionicons name="chatbubble-ellipses" size={24} color="#2ECC71" />
+                    )}
                     {thread.unread > 0 && (
                         <View style={styles.unreadBadge}>
                             <Text style={styles.unreadText}>{thread.unread}</Text>
@@ -161,37 +173,57 @@ const MessagesScreen = () => {
                 <Text style={styles.headerTitle}>Messages</Text>
             </View>
 
-            {/* Matches Rail */}
-            {matches.length > 0 && (
-                <View style={styles.matchesRailContainer}>
-                    <Text style={styles.matchesTitle}>Nowe pary</Text>
-                    <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={styles.matchesContent}
-                    >
-                        {matches.map(match => (
-                            <TouchableOpacity
-                                key={match.id}
-                                style={styles.matchItem}
-                                onPress={() => navigation.navigate('NewMessage', {
-                                    recipientId: match.id,
-                                    recipientName: match.name
-                                })}
-                            >
-                                <View style={styles.matchAvatarContainer}>
-                                    <Image
-                                        source={{ uri: match.hires_avatar?.large || match.hires_avatar?.full || match.avatar_urls?.full || 'https://via.placeholder.com/60' }}
-                                        style={styles.matchAvatar}
-                                    />
-                                    {/* Optional: Indicator if new match? For now just show all */}
-                                </View>
-                                <Text style={styles.matchName} numberOfLines={1}>{match.name}</Text>
-                            </TouchableOpacity>
-                        ))}
-                    </ScrollView>
-                </View>
-            )}
+            {/* Matches Rail - only show matches WITHOUT active conversations */}
+            {(() => {
+                // Get all user IDs that have active threads
+                const usersWithThreads = new Set();
+                threads.forEach(thread => {
+                    if (thread.participants) {
+                        thread.participants.forEach(p => {
+                            const userId = p.user_id || p;
+                            // Exclude current user
+                            if (userInfo?.id && userId != userInfo.id) {
+                                usersWithThreads.add(userId.toString());
+                            }
+                        });
+                    }
+                });
+
+                // Filter matches to only show those WITHOUT threads
+                const newMatches = matches.filter(match =>
+                    !usersWithThreads.has(match.id.toString())
+                );
+
+                return newMatches.length > 0 && (
+                    <View style={styles.matchesRailContainer}>
+                        <Text style={styles.matchesTitle}>Nowe pary</Text>
+                        <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={styles.matchesContent}
+                        >
+                            {newMatches.map(match => (
+                                <TouchableOpacity
+                                    key={match.id}
+                                    style={styles.matchItem}
+                                    onPress={() => navigation.navigate('NewMessage', {
+                                        recipientId: match.id,
+                                        recipientName: match.name
+                                    })}
+                                >
+                                    <View style={styles.matchAvatarContainer}>
+                                        <Image
+                                            source={{ uri: match.hires_avatar?.large || match.hires_avatar?.full || match.avatar_urls?.full || 'https://via.placeholder.com/60' }}
+                                            style={styles.matchAvatar}
+                                        />
+                                    </View>
+                                    <Text style={styles.matchName} numberOfLines={1}>{match.name}</Text>
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+                    </View>
+                );
+            })()}
 
             {threads.length === 0 && !loading ? (
                 <View style={styles.emptyContainer}>
@@ -230,13 +262,15 @@ const styles = StyleSheet.create({
     listContent: { padding: 15 },
     item: {
         flexDirection: 'row',
-        backgroundColor: '#fff',
+        backgroundColor: 'rgba(255, 255, 255, 0.9)', // Slightly transparent
         padding: 15,
         borderRadius: 15,
         marginBottom: 10,
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.2)', // Subtle glass/paper border
         shadowColor: "#000",
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
+        shadowOpacity: 0.1,
         shadowRadius: 3,
         elevation: 2,
         alignItems: 'center',
@@ -250,6 +284,12 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         marginRight: 12,
         position: 'relative',
+        overflow: 'hidden',
+    },
+    avatarImage: {
+        width: 50,
+        height: 50,
+        borderRadius: 25,
     },
     unreadBadge: {
         position: 'absolute',

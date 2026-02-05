@@ -35,11 +35,7 @@ export const getMembers = async (page = 1, per_page = 20, search = '', min_age =
 
 export const getMember = async (id) => {
     try {
-        const response = await client.get(`/buddypress/v1/members/${id}`, {
-            params: {
-                populate_extras: true,
-            },
-        });
+        const response = await client.get(`/sk/v1/member/${id}`);
         return response.data;
     } catch (error) {
         throw error;
@@ -124,6 +120,16 @@ export const updateMemberName = async (userId, name) => {
         const response = await client.post(`/buddypress/v1/members/${userId}`, {
             name: name
         });
+        return response.data;
+    } catch (error) {
+        throw error;
+    }
+};
+
+// Delete user account - required by Apple App Store
+export const deleteAccount = async () => {
+    try {
+        const response = await client.delete('/sk/v1/delete-account');
         return response.data;
     } catch (error) {
         throw error;

@@ -65,7 +65,8 @@ const MainTabNavigator = () => {
             />
             <Tab.Screen
                 name="LikesMe"
-                component={MatchesScreen}
+                component={MembersScreen}
+                initialParams={{ initialTab: 'likesMe' }}
                 options={{
                     tabBarLabel: 'Lubią Mnie',
                     tabBarIcon: ({ color, size }) => <Ionicons name="heart" size={size} color={color} />,
