@@ -208,13 +208,14 @@ const styles = StyleSheet.create({
     },
     actionButton: {
         flex: 1,
-        flexDirection: 'row',
+        flexDirection: 'column', // Vertical layout: Icon on top, Text below
         justifyContent: 'center',
         alignItems: 'center',
-        paddingVertical: 14, // Increased height
-        paddingHorizontal: 4, // Reduced horizontal padding to prevent wrapping
+        paddingVertical: 12,
+        paddingHorizontal: 4,
         borderRadius: 12,
-        gap: 4, // Reduced gap between icon and text
+        gap: 4,
+        minHeight: 60, // Ensure good touch target size
     },
     restoreButton: {
         backgroundColor: '#3498db',
