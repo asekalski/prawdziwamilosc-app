@@ -136,12 +136,14 @@ const MembersScreen = ({ route }) => {
     const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'search'); // Tab navigation state
     const [hasMore, setHasMore] = useState(true); // Track if there are more results to load
 
-    // Update active tab when params change
-    useEffect(() => {
-        if (route?.params?.initialTab) {
-            setActiveTab(route.params.initialTab);
-        }
-    }, [route?.params?.initialTab]);
+    // Update active tab when params change or screen is focused
+    useFocusEffect(
+        React.useCallback(() => {
+            if (route?.params?.initialTab) {
+                setActiveTab(route.params.initialTab);
+            }
+        }, [route?.params?.initialTab])
+    );
 
     // Filter modal state
     const [showFiltersModal, setShowFiltersModal] = useState(false);
