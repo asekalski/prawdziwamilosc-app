@@ -405,6 +405,29 @@ const ProfileScreen = ({ route }) => {
                         </View>
                     )}
 
+                    {/* Legal Section - App Store Requirement */}
+                    {isOwnProfile && (
+                        <View style={styles.group}>
+                            <Text style={styles.groupName}>Informacje Prawne</Text>
+
+                            <TouchableOpacity
+                                style={[styles.contactButton, { marginBottom: 12 }]}
+                                onPress={() => Linking.openURL('https://prawdziwamilosc.pl/polityka-prywatnosci')}
+                            >
+                                <Ionicons name="shield-checkmark-outline" size={22} color="#FFFFFF" style={{ marginRight: 12 }} />
+                                <Text style={styles.contactButtonText}>Polityka Prywatności</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={styles.contactButton}
+                                onPress={() => Linking.openURL('https://prawdziwamilosc.pl/regulamin')}
+                            >
+                                <Ionicons name="document-text-outline" size={22} color="#FFFFFF" style={{ marginRight: 12 }} />
+                                <Text style={styles.contactButtonText}>Regulamin i Wytyczne</Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
+
 
 
                     {/* Safety Section - Report & Block (For Other Users) */}
