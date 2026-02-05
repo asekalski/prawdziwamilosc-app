@@ -23,8 +23,32 @@ const ChatScreen = ({ route }) => {
     // Helper to parse dates safely
     const parseDate = (msg) => {
         if (msg.isOptimistic && msg.date_sent) return new Date(msg.date_sent);
-        if (msg.created_at && !isNaN(msg.created_at)) return new Date(parseInt(msg.created_at));
-        if (msg.date_sent) return new Date(msg.date_sent);
+
+        // Handle string date (likely SQL format from server)
+        if (msg.date_sent && typeof msg.date_sent === 'string') {
+            // If missing timezone info, assume UTC
+            if (!msg.date_sent.includes('Z') && !msg.date_sent.includes('+') && !msg.date_sent.includes('T')) {
+                return new Date(msg.date_sent.replace(' ', 'T') + 'Z');
+            }
+            if (!msg.date_sent.includes('Z') && !msg.date_sent.includes('+')) {
+                return new Date(msg.date_sent + 'Z');
+            }
+            return new Date(msg.date_sent);
+        }
+
+        // Handle numeric timestamp
+        if (msg.created_at || (typeof msg.date_sent === 'number')) {
+            const raw = msg.created_at || msg.date_sent;
+            const ts = parseInt(raw);
+            if (!isNaN(ts)) {
+                // Heuristic: If small timestamp (seconds), multiply by 1000
+                if (ts < 10000000000) return new Date(ts * 1000);
+                // Heuristic: If 14 digits (likely 10x ms), divide by 10
+                if (ts > 10000000000000) return new Date(ts / 10);
+                return new Date(ts);
+            }
+        }
+
         return new Date(); // Fallback
     };
 
@@ -43,7 +67,8 @@ const ChatScreen = ({ route }) => {
         let threadMessages = allMessages.filter(msg =>
             parseInt(msg.thread_id) === parseInt(threadId)
         );
-        threadMessages.sort((a, b) => parseDate(a) - parseDate(b));
+        // Sort DESC (Newest first) for Inverted List
+        threadMessages.sort((a, b) => parseDate(b) - parseDate(a));
         setMessages(threadMessages);
         setLoading(false);
     }, [threadId]);
@@ -86,7 +111,14 @@ const ChatScreen = ({ route }) => {
                             const match = incomingMessages.find(inc => {
                                 const incText = (inc.message || '').replace(/<[^>]*>/g, '').trim().toLowerCase();
                                 const msgText = (msg.message || '').replace(/<[^>]*>/g, '').trim().toLowerCase();
-                                return incText === msgText && String(inc.sender_id) === String(msg.sender_id);
+
+                                const isContentMatch = incText === msgText || incText.includes(msgText) || msgText.includes(incText);
+                                const isSenderMatch = String(inc.sender_id) === String(msg.sender_id);
+
+                                // DEBUG MERGE
+                                // if (isSenderMatch) console.log(`Comparing: [${msgText}] vs [${incText}] -> Match: ${isContentMatch}`);
+
+                                return isContentMatch && isSenderMatch;
                             });
 
                             if (match) {
@@ -131,7 +163,8 @@ const ChatScreen = ({ route }) => {
                     });
 
                     // Sort everything final time
-                    merged.sort((a, b) => parseDate(a) - parseDate(b));
+                    // Sort DESC (Newest first) for Inverted List
+                    merged.sort((a, b) => parseDate(b) - parseDate(a));
 
                     // Simple deduplication by ID just in case
                     const unique = [];
@@ -176,22 +209,46 @@ const ChatScreen = ({ route }) => {
             optimisticExpiry: Date.now() + 60000
         };
 
-        // Add to state immediately
-        setMessages(prev => [...prev, tempMessage]);
+        // Add to state (prepend for inverted list)
+        setMessages(prev => [tempMessage, ...prev]);
 
         setReplyText('');
         setSending(true);
 
-        setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+        // Scroll to bottom (offset 0)
+        setTimeout(() => flatListRef.current?.scrollToOffset({ offset: 0, animated: true }), 100);
 
         try {
-            await client.post(`/better-messages/v1/thread/${threadId}/send`, {
+            const response = await client.post(`/better-messages/v1/thread/${threadId}/send`, {
                 message: messageText,
                 content: messageText,
                 tempId: tempId
             });
-            // On success, we just wait for polling to replace it.
-            // Or we could try to update it if the response had data.
+
+            // Immediately replace optimistic message with real confirmed message from server
+            if (response.data) {
+                setMessages(prev => prev.map(m => {
+                    if (m.id === tempId) {
+                        // Robust ID check: verify root and nested 'message' object
+                        const serverData = response.data;
+                        const realId = serverData.id || serverData.message_id || serverData.message?.id || serverData.message?.message_id;
+
+                        // If we found a real ID, use it to finalize the message
+                        if (realId) {
+                            return {
+                                ...m,
+                                ...serverData,
+                                ...(serverData.message || {}), // Flatten message object if present
+                                id: realId,
+                                isOptimistic: false
+                            };
+                        }
+                        // If no ID found, keep optimistic flag but update content if possible
+                        return { ...m, ...serverData };
+                    }
+                    return m;
+                }));
+            }
         } catch (error) {
             console.error('Send error:', error);
             setMessages(prev => prev.filter(m => m.id !== tempId));
@@ -203,8 +260,11 @@ const ChatScreen = ({ route }) => {
     };
 
     const renderMessage = ({ item }) => {
+        // Use userInfo.id directly as source of truth
         const senderId = String(item.sender_id);
-        const myId = String(currentUserId);
+        const myId = String(userInfo?.id);
+
+
         const isMe = senderId === myId;
         const messageText = (item.message || '').replace(/<[^>]*>/g, '').trim();
 
@@ -256,8 +316,8 @@ const ChatScreen = ({ route }) => {
                 data={messages}
                 renderItem={renderMessage}
                 keyExtractor={item => (item.id || item.message_id || item.tempId)?.toString()}
-                contentContainerStyle={styles.messagesList}
-                onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+                contentContainerStyle={[styles.messagesList, { flexGrow: 1, justifyContent: 'flex-end' }]} // Ensure empty space is at top
+                inverted={true} // Inverted list
                 showsVerticalScrollIndicator={false}
                 ListEmptyComponent={
                     <View style={styles.emptyContainer}>

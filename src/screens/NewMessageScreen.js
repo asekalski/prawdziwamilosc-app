@@ -38,7 +38,8 @@ const NewMessageScreen = ({ route, navigation }) => {
                             setExistingThreadId(thread.id);
                             const threadMessages = (threadsData.messages || [])
                                 .filter(msg => msg.thread_id === thread.id)
-                                .sort((a, b) => new Date(a.date_sent) - new Date(b.date_sent));
+                                // Sort DESC (Newest first) for Inverted List
+                                .sort((a, b) => new Date(b.date_sent) - new Date(a.date_sent));
                             setMessages(threadMessages);
                             break;
                         }
@@ -69,23 +70,42 @@ const NewMessageScreen = ({ route, navigation }) => {
             date_sent: new Date().toISOString(),
             isOptimistic: true
         };
-        setMessages(prev => [...prev, tempMessage]);
+        // Optimistic update - prepend for inverted list
+        setMessages(prev => [tempMessage, ...prev]);
 
         try {
-            await sendMessage(recipientId, recipientName, messageText);
+            const response = await sendMessage(recipientId, recipientName, messageText);
 
-            // Refresh messages to get the real message from server
-            const threadsData = await getThreads(1, 50);
-            if (threadsData?.threads) {
-                for (const thread of threadsData.threads) {
-                    const recipientIds = Object.keys(thread.recipients || {}).map(id => parseInt(id));
-                    if (recipientIds.includes(parseInt(recipientId))) {
-                        setExistingThreadId(thread.id);
-                        const threadMessages = (threadsData.messages || [])
-                            .filter(msg => msg.thread_id === thread.id)
-                            .sort((a, b) => new Date(a.date_sent) - new Date(b.date_sent));
-                        setMessages(threadMessages);
-                        break;
+            // Unify logic with ChatScreen - replace optimistic message immediately
+            if (response && (response.id || response.message_id)) {
+                setMessages(prev => prev.map(m => {
+                    if (m.id === tempMessage.id) {
+                        const realId = response.id || response.message_id;
+                        return {
+                            ...m,
+                            ...response,
+                            id: realId,
+                            isOptimistic: false
+                        };
+                    }
+                    return m;
+                }));
+            }
+
+            // Refresh threads in background if needed, but don't force-reset messages if we just updated them
+            // Or only fetch if we didn't have a thread ID before
+            if (!existingThreadId) {
+                const threadsData = await getThreads(1, 50);
+                if (threadsData?.threads) {
+                    for (const thread of threadsData.threads) {
+                        // ... find thread logic ...
+                        // If found, set thread ID but maybe don't overwrite messages if we have them?
+                        // Actually for NEW thread we might need to sync up.
+                        const recipientIds = Object.keys(thread.recipients || {}).map(id => parseInt(id));
+                        if (recipientIds.includes(parseInt(recipientId))) {
+                            setExistingThreadId(thread.id);
+                            break;
+                        }
                     }
                 }
             }
@@ -99,11 +119,47 @@ const NewMessageScreen = ({ route, navigation }) => {
         }
     };
 
+    // Helper to parse dates safely (Shared logic with ChatScreen)
+    const parseDate = (msg) => {
+        if (msg.isOptimistic && msg.date_sent) return new Date(msg.date_sent);
+
+        // Handle string date
+        if (msg.date_sent && typeof msg.date_sent === 'string') {
+            if (!msg.date_sent.includes('Z') && !msg.date_sent.includes('+') && !msg.date_sent.includes('T')) {
+                return new Date(msg.date_sent.replace(' ', 'T') + 'Z');
+            }
+            if (!msg.date_sent.includes('Z') && !msg.date_sent.includes('+')) {
+                return new Date(msg.date_sent + 'Z');
+            }
+            return new Date(msg.date_sent);
+        }
+
+        // Handle numeric timestamp
+        if (msg.created_at || (typeof msg.date_sent === 'number')) {
+            const raw = msg.created_at || msg.date_sent;
+            const ts = parseInt(raw);
+            if (!isNaN(ts)) {
+                if (ts < 10000000000) return new Date(ts * 1000);
+                // Heuristic: If 14 digits (likely 10x ms), divide by 10
+                if (ts > 10000000000000) return new Date(ts / 10);
+                return new Date(ts);
+            }
+        }
+        return new Date();
+    };
+
     const renderMessage = ({ item }) => {
-        const isMe = parseInt(item.sender_id) === parseInt(userInfo?.id);
+        // Use String comparison for safety
+        const isMe = String(item.sender_id) === String(userInfo?.id);
         const messageContent = item.message?.rendered || item.message || '';
         // Strip HTML tags
         const cleanMessage = messageContent.replace(/<[^>]*>/g, '').trim();
+
+        let timeString = '';
+        try {
+            const date = parseDate(item);
+            timeString = date.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+        } catch (e) { }
 
         return (
             <View style={[styles.messageBubble, isMe ? styles.myMessage : styles.theirMessage]}>
@@ -111,7 +167,7 @@ const NewMessageScreen = ({ route, navigation }) => {
                     {cleanMessage}
                 </Text>
                 <Text style={[styles.messageTime, isMe ? styles.myMessageTime : styles.theirMessageTime]}>
-                    {new Date(item.date_sent).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })}
+                    {timeString}
                 </Text>
             </View>
         );
@@ -156,8 +212,8 @@ const NewMessageScreen = ({ route, navigation }) => {
                     data={messages}
                     renderItem={renderMessage}
                     keyExtractor={item => item.id.toString()}
-                    contentContainerStyle={styles.messagesList}
-                    onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+                    contentContainerStyle={[styles.messagesList, { flexGrow: 1, justifyContent: 'flex-end' }]}
+                    inverted={true}
                     showsVerticalScrollIndicator={false}
                 />
             )}

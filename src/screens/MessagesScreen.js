@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useContext } from 'react';
-import { View, FlatList, StyleSheet, TouchableOpacity, Text, ActivityIndicator } from 'react-native';
+import { View, FlatList, StyleSheet, TouchableOpacity, Text, ActivityIndicator, Image, ScrollView } from 'react-native';
 import { getThreads } from '../api/messages';
+import { getMatches } from '../api/members';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,6 +10,7 @@ import { AuthContext } from '../context/AuthContext';
 const MessagesScreen = () => {
     const [threads, setThreads] = useState([]);
     const [allMessages, setAllMessages] = useState([]); // Store all messages
+    const [matches, setMatches] = useState([]); // Store matches
     const [users, setUsers] = useState({}); // Store users by ID
     const [loading, setLoading] = useState(false);
     const navigation = useNavigation();
@@ -44,6 +46,14 @@ const MessagesScreen = () => {
             const threadsArray = data.threads || data || [];
             const messagesArray = data.messages || [];
             const usersArray = data.users || [];
+
+            // Fetch matches
+            try {
+                const matchesData = await getMatches();
+                setMatches(matchesData || []);
+            } catch (err) {
+                console.log('Failed to fetch matches for rail:', err);
+            }
 
             // Convert users array to object for easy lookup
             const usersMap = {};
@@ -151,6 +161,38 @@ const MessagesScreen = () => {
                 <Text style={styles.headerTitle}>Messages</Text>
             </View>
 
+            {/* Matches Rail */}
+            {matches.length > 0 && (
+                <View style={styles.matchesRailContainer}>
+                    <Text style={styles.matchesTitle}>Nowe pary</Text>
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.matchesContent}
+                    >
+                        {matches.map(match => (
+                            <TouchableOpacity
+                                key={match.id}
+                                style={styles.matchItem}
+                                onPress={() => navigation.navigate('NewMessage', {
+                                    recipientId: match.id,
+                                    recipientName: match.name
+                                })}
+                            >
+                                <View style={styles.matchAvatarContainer}>
+                                    <Image
+                                        source={{ uri: match.hires_avatar?.large || match.hires_avatar?.full || match.avatar_urls?.full || 'https://via.placeholder.com/60' }}
+                                        style={styles.matchAvatar}
+                                    />
+                                    {/* Optional: Indicator if new match? For now just show all */}
+                                </View>
+                                <Text style={styles.matchName} numberOfLines={1}>{match.name}</Text>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                </View>
+            )}
+
             {threads.length === 0 && !loading ? (
                 <View style={styles.emptyContainer}>
                     <Ionicons name="chatbubbles-outline" size={64} color="#ccc" />
@@ -248,6 +290,48 @@ const styles = StyleSheet.create({
         fontSize: 14,
         color: '#999999',
         marginTop: 5,
+    },
+
+    // Matches Rail Styles
+    matchesRailContainer: {
+        paddingVertical: 15,
+        paddingLeft: 20,
+        backgroundColor: '#2C2C2E',
+        borderBottomWidth: 1,
+        borderBottomColor: '#3A3A3C',
+    },
+    matchesTitle: {
+        color: '#E74C3C',
+        fontSize: 14,
+        fontWeight: 'bold',
+        marginBottom: 10,
+        letterSpacing: 1,
+        textTransform: 'uppercase',
+    },
+    matchesContent: {
+        paddingRight: 20,
+    },
+    matchItem: {
+        marginRight: 15,
+        alignItems: 'center',
+        width: 70,
+    },
+    matchAvatarContainer: {
+        padding: 2,
+        borderRadius: 35,
+        borderWidth: 2,
+        borderColor: '#E74C3C',
+        marginBottom: 5,
+    },
+    matchAvatar: {
+        width: 60,
+        height: 60,
+        borderRadius: 30,
+    },
+    matchName: {
+        color: '#fff',
+        fontSize: 12,
+        textAlign: 'center',
     },
 });
 
