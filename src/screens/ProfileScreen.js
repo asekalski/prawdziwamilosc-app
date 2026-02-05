@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext } from 'react';
-import { View, Text, StyleSheet, Image, ActivityIndicator, ScrollView, Alert, TextInput, Modal, FlatList, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Image, ActivityIndicator, ScrollView, Alert, TextInput, Modal, FlatList, Pressable, Linking } from 'react-native';
 import { getMember, updateXProfileField, updateMemberName, deleteAccount } from '../api/members';
 import { getThreads } from '../api/messages';
 import { AuthContext } from '../context/AuthContext';
@@ -348,6 +348,34 @@ const ProfileScreen = ({ route }) => {
                             )}
                         </View>
                     )
+                    )}
+
+                    {/* Contact / Feedback Section */}
+                    {isOwnProfile && (
+                        <View style={styles.group}>
+                            <Text style={styles.groupName}>Wsparcie i Kontakt</Text>
+                            <TouchableOpacity
+                                style={styles.contactButton}
+                                onPress={() => {
+                                    const subject = `Feedback Prawdziwa Miłość (User: ${member.id})`;
+                                    const body = `Cześć,\n\nChciałbym zgłosić następujący feedback:\n\n`;
+                                    const mailUrl = `mailto:admin@prawdziwamilosc.pl?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+
+                                    Linking.canOpenURL(mailUrl)
+                                        .then(supported => {
+                                            if (supported) {
+                                                Linking.openURL(mailUrl);
+                                            } else {
+                                                Alert.alert('Błąd', 'Nie znaleziono aplikacji pocztowej. Napisz na: admin@prawdziwamilosc.pl');
+                                            }
+                                        })
+                                        .catch(err => console.error('An error occurred', err));
+                                }}
+                            >
+                                <Ionicons name="mail-outline" size={22} color="#FFFFFF" style={{ marginRight: 12 }} />
+                                <Text style={styles.contactButtonText}>Napisz do nas / Zgłoś błąd</Text>
+                            </TouchableOpacity>
+                        </View>
                     )}
 
                     {/* Delete Account Section - Required by Apple */}
@@ -745,6 +773,21 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: '600',
         color: '#FF3B30',
+    },
+    contactButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255, 255, 255, 0.1)',
+        paddingVertical: 16,
+        paddingHorizontal: 20,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.15)',
+    },
+    contactButtonText: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#FFFFFF',
     },
 });
 
