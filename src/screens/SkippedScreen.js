@@ -98,6 +98,9 @@ const SkippedScreen = () => {
         <View style={[styles.container, { paddingTop: insets.top }]}>
             <View style={styles.header}>
                 <Text style={styles.headerTitle}>Usunięci</Text>
+                <Text style={styles.headerInfo}>
+                    Ci użytkownicy nie mogą do Ciebie pisać ani Cię lajkować.
+                </Text>
                 <Text style={styles.headerSubtitle}>
                     {users.length} {users.length === 1 ? 'osoba' : 'osób'}
                 </Text>
@@ -145,7 +148,13 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         fontFamily: 'serif',
         color: '#FFFFFF',
-        marginBottom: 5,
+        marginBottom: 8,
+    },
+    headerInfo: {
+        fontSize: 14,
+        color: '#E8B4B8', // Using the app's secondary pinkish color for attention
+        marginBottom: 8,
+        lineHeight: 20,
     },
     headerSubtitle: {
         fontSize: 14,
@@ -191,20 +200,21 @@ const styles = StyleSheet.create({
     actions: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        gap: 12,
+        gap: 8, // Reduced gap to give more space to buttons
         borderTopWidth: 1,
         borderTopColor: '#f0f0f0',
         paddingTop: 12,
+        width: '100%',
     },
     actionButton: {
         flex: 1,
         flexDirection: 'row',
         justifyContent: 'center',
         alignItems: 'center',
-        paddingVertical: 12,
-        paddingHorizontal: 8,
+        paddingVertical: 14, // Increased height
+        paddingHorizontal: 4, // Reduced horizontal padding to prevent wrapping
         borderRadius: 12,
-        gap: 6,
+        gap: 4, // Reduced gap between icon and text
     },
     restoreButton: {
         backgroundColor: '#3498db',
