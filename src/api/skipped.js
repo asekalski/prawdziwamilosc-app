@@ -14,9 +14,16 @@ export const getSkippedUserIds = async () => {
     }
 };
 
-// Add a user to the skipped list
+// Add a user to the skipped list (Block)
 export const addSkippedUser = async (userId) => {
     try {
+        // 1. Call Backend
+        await client.post('/sk/v1/block', {
+            user_id: userId,
+            action: 'block'
+        });
+
+        // 2. Update Local Storage
         const skipped = await getSkippedUserIds();
         if (!skipped.includes(userId)) {
             skipped.push(userId);
@@ -24,17 +31,40 @@ export const addSkippedUser = async (userId) => {
         }
     } catch (error) {
         console.error('Failed to add skipped user:', error);
+        // Fallback: still add to local storage if API fails? 
+        // For now, let's allow "offline blocking" (optimistic) or just fail silent.
+        // Better option: Force Local Block even if API fails (Optimistic UI)
+        try {
+            const skipped = await getSkippedUserIds();
+            if (!skipped.includes(userId)) {
+                skipped.push(userId);
+                await AsyncStorage.setItem(SKIPPED_USERS_KEY, JSON.stringify(skipped));
+            }
+        } catch (e) { }
     }
 };
 
-// Remove a user from the skipped list (restore)
+// Remove a user from the skipped list (Unblock)
 export const removeSkippedUser = async (userId) => {
     try {
+        // 1. Call Backend
+        await client.post('/sk/v1/block', {
+            user_id: userId,
+            action: 'unblock'
+        });
+
+        // 2. Update Local Storage
         const skipped = await getSkippedUserIds();
         const filtered = skipped.filter(id => id !== userId);
         await AsyncStorage.setItem(SKIPPED_USERS_KEY, JSON.stringify(filtered));
     } catch (error) {
         console.error('Failed to remove skipped user:', error);
+        // Optimistic Unblock
+        try {
+            const skipped = await getSkippedUserIds();
+            const filtered = skipped.filter(id => id !== userId);
+            await AsyncStorage.setItem(SKIPPED_USERS_KEY, JSON.stringify(filtered));
+        } catch (e) { }
     }
 };
 

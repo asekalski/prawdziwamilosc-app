@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { View, Text, StyleSheet, Image, ActivityIndicator, ScrollView, Alert, TextInput, Modal, FlatList, Pressable, Linking } from 'react-native';
 import { getMember, updateXProfileField, updateMemberName, deleteAccount } from '../api/members';
+import { addSkippedUser } from '../api/skipped';
 import { getThreads } from '../api/messages';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme, useNavigation } from '@react-navigation/native';
@@ -239,6 +240,32 @@ const ProfileScreen = ({ route }) => {
         }
     };
 
+
+
+    const handleBlockPress = async () => {
+        Alert.alert(
+            'Zablokuj użytkownika',
+            'Czy na pewno chcesz zablokować tego użytkownika? Nie będziesz go już widzieć w wynikach wyszukiwania.',
+            [
+                { text: 'Anuluj', style: 'cancel' },
+                {
+                    text: 'Zablokuj',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            await addSkippedUser(member.id);
+                            Alert.alert('Zablokowano', 'Użytkownik został zablokowany.');
+                            navigation.goBack();
+                        } catch (error) {
+                            console.error('Error blocking user:', error);
+                            Alert.alert('Błąd', 'Nie udało się zablokować użytkownika.');
+                        }
+                    }
+                }
+            ]
+        );
+    };
+
     if (loading) {
         return <View style={styles.center}><ActivityIndicator /></View>;
     }
@@ -378,6 +405,44 @@ const ProfileScreen = ({ route }) => {
                         </View>
                     )}
 
+
+
+                    {/* Safety Section - Report & Block (For Other Users) */}
+                    {!isOwnProfile && (
+                        <View style={styles.group}>
+                            <Text style={styles.groupName}>Bezpieczeństwo</Text>
+
+                            <TouchableOpacity
+                                style={[styles.contactButton, { marginBottom: 12 }]}
+                                onPress={() => {
+                                    const subject = `ZGŁOSZENIE UŻYTKOWNIKA (ID: ${member.id})`;
+                                    const body = `Zgłaszam użytkownika ${member.name} (ID: ${member.id}) z powodu:\n\n`;
+                                    const mailUrl = `mailto:admin@prawdziwamilosc.pl?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+
+                                    Linking.canOpenURL(mailUrl)
+                                        .then(supported => {
+                                            if (supported) {
+                                                Linking.openURL(mailUrl);
+                                            } else {
+                                                Alert.alert('Błąd', 'Brak klienta poczty. Zgłoś na: admin@prawdziwamilosc.pl');
+                                            }
+                                        });
+                                }}
+                            >
+                                <Ionicons name="flag-outline" size={22} color="#FFFFFF" style={{ marginRight: 12 }} />
+                                <Text style={styles.contactButtonText}>Zgłoś użytkownika</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={[styles.contactButton, { borderColor: 'rgba(255, 59, 48, 0.3)', backgroundColor: 'rgba(255, 59, 48, 0.1)' }]}
+                                onPress={handleBlockPress}
+                            >
+                                <Ionicons name="ban-outline" size={22} color="#FF3B30" style={{ marginRight: 12 }} />
+                                <Text style={[styles.contactButtonText, { color: '#FF3B30' }]}>Zablokuj użytkownika</Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
+
                     {/* Delete Account Section - Required by Apple */}
                     {isOwnProfile && (
                         <View style={styles.dangerZone}>
@@ -444,11 +509,11 @@ const ProfileScreen = ({ route }) => {
                             </TouchableOpacity>
                         </View>
                     )}
-                </View>
-            </ScrollView>
+                </View >
+            </ScrollView >
 
             {/* Select Options Modal */}
-            <Modal
+            < Modal
                 visible={showSelectModal}
                 transparent={true}
                 animationType="slide"
@@ -495,7 +560,7 @@ const ProfileScreen = ({ route }) => {
                         />
                     </View>
                 </Pressable>
-            </Modal>
+            </Modal >
         </>
     );
 };

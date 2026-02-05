@@ -337,7 +337,11 @@ const MembersScreen = ({ route }) => {
             // Filter out already liked users from search results
             const likedData = await getLikedUsers();
             const likedIds = new Set((likedData || []).map(u => u.id));
-            data = (data || []).filter(member => !likedIds.has(member.id));
+
+            // Filter out skipped users
+            const skippedIds = await getSkippedUserIds();
+
+            data = (data || []).filter(member => !likedIds.has(member.id) && !skippedIds.includes(member.id));
 
             // Enrich members with zodiac data in background
             data.forEach(async (member) => {
@@ -390,7 +394,11 @@ const MembersScreen = ({ route }) => {
                     // Filter out already liked users from search results
                     const likedData = await getLikedUsers();
                     const likedIds = new Set((likedData || []).map(u => u.id));
-                    data = (data || []).filter(member => !likedIds.has(member.id));
+
+                    // Filter out skipped users
+                    const skippedIds = await getSkippedUserIds();
+
+                    data = (data || []).filter(member => !likedIds.has(member.id) && !skippedIds.includes(member.id));
                     break;
                 case 'liked':
                     // Backend now returns full xprofile data, no need for additional getMember calls
