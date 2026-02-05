@@ -2,7 +2,7 @@ import React, { useState, useEffect, useContext, useRef } from 'react';
 import { View, Text, FlatList, StyleSheet, TextInput, ActivityIndicator, Image, TouchableOpacity, Dimensions, Alert, SafeAreaView, ScrollView, Modal, Animated, PanResponder } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getMembers, getXProfileGroups, getMember, toggleLike, getLikedUsers, getLikesMeUsers, getMatches } from '../api/members';
-import { addSkippedUser } from '../api/skipped';
+import { addSkippedUser, getSkippedUsers, removeSkippedUser, getSkippedUserIds } from '../api/skipped';
 import { getSuperMessageStatus } from '../api/superMessages';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '@react-navigation/native';
@@ -11,11 +11,90 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AuthContext } from '../context/AuthContext';
 import SuperMessageModal from '../components/SuperMessageModal';
 
+// Helpers
+const stripHtml = (str) => {
+    if (!str) return '';
+    return String(str).replace(/<[^>]*>?/gm, '');
+};
+
+const calculateAge = (dateString) => {
+    if (!dateString) return null;
+    const birthDate = new Date(dateString);
+    const today = new Date();
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const m = today.getMonth() - birthDate.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+        age--;
+    }
+    return age;
+};
+
+const mapUserProfile = (user) => {
+    if (!user.xprofile || !user.xprofile.groups) return user;
+
+    const fieldMap = {};
+    const fieldIdMap = {};
+
+    for (const group of user.xprofile.groups) {
+        let fieldsArray = [];
+        if (Array.isArray(group.fields)) {
+            fieldsArray = group.fields;
+        } else if (group.fields && typeof group.fields === 'object') {
+            fieldsArray = Object.values(group.fields);
+        }
+
+        for (const field of fieldsArray) {
+            let val = null;
+            if (field.value && typeof field.value === 'object') {
+                val = field.value.rendered || field.value.raw;
+            } else {
+                val = field.value;
+            }
+            if (val && typeof val === 'object') {
+                if (val.date) val = val.date;
+                else try { val = JSON.stringify(val); } catch (e) { val = String(val); }
+            }
+
+            if (field.name) {
+                fieldMap[field.name.toLowerCase()] = val;
+            }
+            if (field.id) {
+                fieldIdMap[field.id] = val;
+            }
+        }
+    }
+
+    const getVal = (id, ...names) => {
+        if (fieldIdMap[id]) return fieldIdMap[id];
+        for (const name of names) {
+            const lowerName = name.toLowerCase();
+            if (fieldMap[lowerName]) return fieldMap[lowerName];
+            const foundKey = Object.keys(fieldMap).find(k => k.startsWith(lowerName));
+            if (foundKey) return fieldMap[foundKey];
+        }
+        return null;
+    };
+
+    const cleanBio = stripHtml(getVal(367) || user.bio || getVal('o mnie', 'opis'));
+
+    return {
+        ...user,
+        bio: cleanBio,
+        faith: stripHtml(getVal(346, 'podejście do wiary', 'wyznanie')),
+        politics: stripHtml(getVal(351, 'poglądy polityczne')),
+        work: stripHtml(getVal(356, 'styl pracy', 'praca')),
+        diet: stripHtml(getVal(362, 'styl jedzenia', 'dieta')),
+        zodiac_sign: stripHtml(getVal(303, 'znak zodiaku', 'zodiak')),
+        age: user.age || calculateAge(getVal(107, 'data urodzenia', 'wiek', 'birthdate'))
+    };
+};
+
 const TABS = [
     { id: 'search', label: 'Wyszukaj' },
     { id: 'liked', label: 'Polubieni', hasPremiumBadge: true },
     { id: 'likesMe', label: 'Lubią Mnie', hasPremiumBadge: true },
     { id: 'matches', label: 'Matche' },
+    { id: 'skipped', label: 'Usunięci' },
 ];
 
 const { width } = Dimensions.get('window');
@@ -74,6 +153,9 @@ const MembersScreen = () => {
     const [showSuperMessageModal, setShowSuperMessageModal] = useState(false);
     const [superMessageRecipient, setSuperMessageRecipient] = useState(null);
     const [isPremium, setIsPremium] = useState(false);
+
+    // Card swipe animations - store animation values per card
+    const cardAnimations = useRef({}).current;
 
     // Check premium status on mount
     useEffect(() => {
@@ -240,8 +322,12 @@ const MembersScreen = () => {
         if (loading && pageNum > 1) return;
         setLoading(true);
         try {
-            const data = await getMembers(pageNum, 20, searchQuery, ageRange.min, ageRange.max, extendedFilters.faith, extendedFilters.politics, extendedFilters.work, extendedFilters.diet);
+            let data = await getMembers(pageNum, 20, searchQuery, ageRange.min, ageRange.max, extendedFilters.faith, extendedFilters.politics, extendedFilters.work, extendedFilters.diet);
 
+            // Filter out already liked users from search results
+            const likedData = await getLikedUsers();
+            const likedIds = new Set((likedData || []).map(u => u.id));
+            data = (data || []).filter(member => !likedIds.has(member.id));
 
             // Enrich members with zodiac data in background
             data.forEach(async (member) => {
@@ -273,28 +359,191 @@ const MembersScreen = () => {
         }
     };
 
-    // Fetch data based on active tab
     const fetchTabData = async (tabId, searchQuery = '') => {
+        // Clear members immediately to prevent flash of old data
+        setMembers([]);
         setLoading(true);
         try {
             let data = [];
+
+            // Helper for fetching full profile details
+            const fetchFullDetails = async (users) => {
+                if (!users || users.length === 0) return [];
+                const promises = users.map(u => getMember(u.id).catch(e => u));
+                const rawData = await Promise.all(promises);
+                return rawData.map(mapUserProfile);
+            };
+
             switch (tabId) {
                 case 'search':
                     data = await getMembers(1, 20, searchQuery, ageRange.min, ageRange.max, extendedFilters.faith, extendedFilters.politics, extendedFilters.work, extendedFilters.diet);
+                    // Filter out already liked users from search results
+                    const likedData = await getLikedUsers();
+                    const likedIds = new Set((likedData || []).map(u => u.id));
+                    data = (data || []).filter(member => !likedIds.has(member.id));
                     break;
                 case 'liked':
-                    data = await getLikedUsers();
+                    const simpleLiked = await getLikedUsers();
+                    // Fetch full details for each liked user to ensure we have xprofile fields (bio, tags, etc.)
+                    if (simpleLiked && simpleLiked.length > 0) {
+                        try {
+                            const fullDetailsPromises = simpleLiked.map(u => getMember(u.id).catch(e => {
+                                console.warn('Failed to fetch full details for', u.id, e);
+                                return u;
+                            }));
+                            const rawData = await Promise.all(fullDetailsPromises);
+
+                            // Map xprofile fields to top-level properties to match Search tab structure
+                            data = rawData.map(user => {
+                                if (!user.xprofile || !user.xprofile.groups) return user;
+
+                                // Create a map of fields by Name (lowercase) and ID
+                                const fieldMap = {};
+                                const fieldIdMap = {};
+
+                                for (const group of user.xprofile.groups) {
+                                    let fieldsArray = [];
+                                    if (Array.isArray(group.fields)) {
+                                        fieldsArray = group.fields;
+                                    } else if (group.fields && typeof group.fields === 'object') {
+                                        fieldsArray = Object.values(group.fields);
+                                    }
+
+                                    for (const field of fieldsArray) {
+                                        let val = null;
+                                        if (field.value && typeof field.value === 'object') {
+                                            val = field.value.rendered || field.value.raw;
+                                        } else {
+                                            val = field.value;
+                                        }
+
+                                        // Ensure val is not an object before storing
+                                        if (val && typeof val === 'object') {
+                                            if (val.date) val = val.date; // Extract date string from BP date object
+                                            else try { val = JSON.stringify(val); } catch (e) { val = String(val); }
+                                        }
+
+                                        if (field.name) {
+                                            fieldMap[field.name.toLowerCase()] = val;
+                                        }
+                                        if (field.id) {
+                                            fieldIdMap[field.id] = val;
+                                        }
+                                    }
+                                }
+
+                                // Helper to get val by ID or Name
+                                const getVal = (id, ...names) => {
+                                    if (fieldIdMap[id]) return fieldIdMap[id];
+                                    for (const name of names) {
+                                        const lowerName = name.toLowerCase();
+                                        if (fieldMap[lowerName]) return fieldMap[lowerName];
+                                        // STARTS WITH match to find "Podejście do wiary" but avoid "Visibility of..."
+                                        const foundKey = Object.keys(fieldMap).find(k => k.startsWith(lowerName));
+                                        if (foundKey) return fieldMap[foundKey];
+                                    }
+                                    return null;
+                                };
+
+                                // DEBUG: List all fields to find IDs
+                                let allFieldsInfo = "";
+                                if (user.xprofile && user.xprofile.groups) {
+                                    user.xprofile.groups.forEach(g => {
+                                        let fields = [];
+                                        if (Array.isArray(g.fields)) fields = g.fields;
+                                        else if (g.fields && typeof g.fields === 'object') fields = Object.values(g.fields);
+
+                                        fields.forEach(f => {
+                                            allFieldsInfo += `[${f.id}:${f.name}] `;
+                                        });
+                                    });
+                                }
+
+                                const stripHtml = (str) => {
+                                    if (!str) return '';
+                                    return String(str).replace(/<[^>]*>?/gm, '');
+                                };
+
+                                // User provided IDs: Bio(367), Faith(346), Politics(351), Work(356), Diet(362)
+                                const cleanBio = stripHtml(getVal(367) || user.bio || getVal('o mnie', 'opis'));
+
+                                return {
+                                    ...user,
+                                    bio: cleanBio,
+                                    faith: stripHtml(getVal(346, 'podejście do wiary', 'wyznanie')),
+                                    politics: stripHtml(getVal(351, 'poglądy polityczne')),
+                                    work: stripHtml(getVal(356, 'styl pracy', 'praca')),
+                                    diet: stripHtml(getVal(362, 'styl jedzenia', 'dieta')),
+                                    zodiac_sign: stripHtml(getVal(303, 'znak zodiaku', 'zodiak')),
+                                    // Calculate age if birthdate field (107) exists
+                                    age: user.age || calculateAge(getVal(107, 'data urodzenia', 'wiek', 'birthdate'))
+                                };
+                            });
+                        } catch (err) {
+                            console.error('Error fetching details for liked users:', err);
+                            data = simpleLiked;
+                        }
+                    } else {
+                        data = [];
+                    }
                     break;
                 case 'likesMe':
-                    data = await getLikesMeUsers();
+                    {
+                        const raw = await getLikesMeUsers();
+                        const skippedIds = await getSkippedUserIds();
+                        data = await fetchFullDetails((raw || []).filter(u => !skippedIds.includes(u.id)));
+                    }
                     break;
                 case 'matches':
-                    data = await getMatches();
+                    {
+                        const raw = await getMatches();
+                        const skippedIds = await getSkippedUserIds();
+                        data = await fetchFullDetails((raw || []).filter(u => !skippedIds.includes(u.id)));
+                    }
+                    break;
+                case 'skipped':
+                    data = await fetchFullDetails(await getSkippedUsers());
                     break;
                 default:
                     data = await getMembers(1, 20, searchQuery, ageRange.min, ageRange.max, extendedFilters.faith, extendedFilters.politics, extendedFilters.work, extendedFilters.diet);
             }
+            // Sanitize data to prevent object rendering errors (React child)
+            if (data && data.length > 0) {
+                data = data.map(u => {
+                    const clean = { ...u };
+                    const sanitize = (val) => {
+                        if (val && typeof val === 'object') {
+                            return val.date || val.rendered || JSON.stringify(val);
+                        }
+                        return val;
+                    };
+
+                    if (typeof clean.last_activity === 'object') clean.last_activity = sanitize(clean.last_activity);
+                    // Check other potential object fields
+                    if (typeof clean.age === 'object') clean.age = sanitize(clean.age);
+                    if (typeof clean.bio === 'object') clean.bio = sanitize(clean.bio);
+
+                    return clean;
+                });
+            }
+
             setMembers(data || []);
+
+            // Enrich members with data in background for all tabs (only if needed)
+            if (data && data.length > 0) {
+                // If we fetched full members (liked tab), we might already have xprofile
+                data.forEach(async (member) => {
+                    // Skip if we already have detailed xprofile data from getMember
+                    if (member.xprofile && member.xprofile.groups) return;
+
+                    if (!member.zodiac && !zodiacCache[member.id]) {
+                        const zodiac = await enrichMemberWithXProfile(member);
+                        if (zodiac) {
+                            setZodiacCache(prev => ({ ...prev, [member.id]: zodiac }));
+                        }
+                    }
+                });
+            }
         } catch (error) {
             console.error(error);
             Alert.alert('Error', `Failed to load data: ${error.message}`);
@@ -357,34 +606,66 @@ const MembersScreen = () => {
     };
 
     const handleLike = async (userId) => {
+        // Ensure user is not in skipped list (fixes bug where liked users appear in skipped)
+        removeSkippedUser(userId);
+
+        // Get or create animation values for this card
+        if (!cardAnimations[userId]) {
+            cardAnimations[userId] = {
+                translateX: new Animated.Value(0),
+                opacity: new Animated.Value(1)
+            };
+        }
+        const anim = cardAnimations[userId];
+
+        // Store the member for match animation before we start
+        const memberBeforeAnimation = members.find(m => m.id === userId);
+
         try {
-            // Optimistic update
-            setLikedUsers(prev => ({ ...prev, [userId]: !prev[userId] }));
+            // Optimistic update for UI feedback
+            setLikedUsers(prev => ({ ...prev, [userId]: true }));
 
-            // Call API
-            const result = await toggleLike(userId);
-            console.log('Like toggled:', result);
+            // Start swipe right animation
+            Animated.parallel([
+                Animated.timing(anim.translateX, {
+                    toValue: width + 100,
+                    duration: 300,
+                    useNativeDriver: true
+                }),
+                Animated.timing(anim.opacity, {
+                    toValue: 0,
+                    duration: 300,
+                    useNativeDriver: true
+                })
+            ]).start(() => {
+                // OPTIMISTIC REMOVAL: Remove from UI immediately after animation completes (300ms)
+                // Do not wait for API response to remove the gap
+                setMembers(prev => prev.filter(m => m.id !== userId));
+                delete cardAnimations[userId];
+            });
 
-            // Update state based on API response
-            if (result.status === 'liked') {
-                setLikedUsers(prev => ({ ...prev, [userId]: true }));
+            // Call API in parallel
+            try {
+                const result = await toggleLike(userId);
+                console.log('Like toggled:', result);
 
-                // Check if it's a match!
-                if (result.is_match) {
+                // Check match asynchronously
+                if (result.status === 'liked' && result.is_match) {
                     console.log('🎉 It\'s a Match!');
-                    const matchedMember = members.find(m => m.id === userId);
-                    if (matchedMember) {
-                        showMatchAnimation(matchedMember);
+                    if (memberBeforeAnimation) {
+                        showMatchAnimation(memberBeforeAnimation);
                     }
                 }
-            } else {
-                setLikedUsers(prev => ({ ...prev, [userId]: false }));
+            } catch (apiError) {
+                console.error('API Error in background:', apiError);
+                // Optionally restore card if API failed, but usually better to just ignore or toast error
+                // For now, keeping smooth UX is priority.
             }
         } catch (error) {
-            console.error('Failed to toggle like:', error);
-            // Revert optimistic update on error
-            setLikedUsers(prev => ({ ...prev, [userId]: !prev[userId] }));
-            Alert.alert('Error', 'Failed to like user. Please try again.');
+            console.error('Failed to init like:', error);
+            anim.translateX.setValue(0);
+            anim.opacity.setValue(1);
+            setLikedUsers(prev => ({ ...prev, [userId]: false }));
         }
     };
 
@@ -476,16 +757,171 @@ const MembersScreen = () => {
         }
     };
 
+    const handleRestore = async (userId) => {
+        try {
+            await removeSkippedUser(userId);
+            setMembers(prev => prev.filter(m => m.id !== userId));
+            Alert.alert('Sukces', 'Użytkownik przywrócony.');
+        } catch (error) {
+            console.error('Failed to restore user:', error);
+        }
+    };
+
+    // Handle unlike (remove from liked list)
+    const handleUnlike = async (userId) => {
+        try {
+            // Call API to toggle like (will unlike since already liked)
+            const result = await toggleLike(userId);
+            console.log('Unlike toggled:', result);
+
+            if (result.status === 'unliked') {
+                // Remove from liked list
+                setMembers(prev => prev.filter(m => m.id !== userId));
+                setLikedUsers(prev => ({ ...prev, [userId]: false }));
+            }
+        } catch (error) {
+            console.error('Failed to unlike user:', error);
+            Alert.alert('Błąd', 'Nie udało się cofnąć polubienia.');
+        }
+    };
+
     const renderItem = ({ item }) => {
-        const zodiac = item.zodiac || zodiacCache[item.id] || getField(item, 303); // Prefer item.zodiac from API
-        const age = item.age || calculateAge(getField(item, 107)); // Prefer item.age from API
-        const zodiacIcon = getZodiacIcon(item.zodiac);
-
+        // Use clean mapped values if available, otherwise try to extract using IDs (fallback)
+        // IDs: Zodiac 303, Bio 367, Faith 346, Politics 351, Work 356, Diet 362
+        const zodiac = item.zodiac_sign || item.zodiac || zodiacCache[item.id] || getField(item, 303);
+        const age = item.age || calculateAge(getField(item, 107));
+        const zodiacIcon = getZodiacIcon(zodiac);
         const imageUrl = item.hires_avatar?.large || item.hires_avatar?.full || item.avatar_urls?.full;
+        const anim = cardAnimations[item.id] || { translateX: new Animated.Value(0), opacity: new Animated.Value(1) };
 
+        const faithField = getField(item, 346);
+        const dietField = getField(item, 362);
+        const workField = getField(item, 356);
+        const politicsField = getField(item, 351); // Fallback for politics
+        const bio = item.bio || getField(item, 367);
 
+        // Horizontal layout for liked/likesMe/matches/skipped tabs
+        const isHorizontalView = activeTab === 'liked' || activeTab === 'likesMe' || activeTab === 'matches' || activeTab === 'skipped';
+
+        if (isHorizontalView) {
+            return (
+                <Animated.View style={[
+                    styles.horizontalCard,
+                    {
+                        transform: [{ translateX: anim.translateX }],
+                        opacity: anim.opacity,
+                    }
+                ]}>
+                    {/* Left side - Photo with name overlay */}
+                    <TouchableOpacity
+                        activeOpacity={0.9}
+                        onPress={() => navigation.navigate('UserProfile', { userId: item.id })}
+                        style={styles.horizontalImageContainer}
+                    >
+                        <Image source={{ uri: imageUrl }} style={styles.horizontalImage} resizeMode="cover" />
+                        <View style={styles.horizontalNameOverlay}>
+                            <Text style={styles.horizontalName}>{item.name}{age ? `, ${age}` : ''}</Text>
+                        </View>
+                    </TouchableOpacity>
+
+                    {/* Right side - Info and buttons */}
+                    <View style={styles.horizontalContent}>
+                        {/* Bio */}
+                        {(item.bio || bio) ? (
+                            <Text style={styles.horizontalBio} numberOfLines={3} ellipsizeMode="tail">
+                                {item.bio || bio}
+                            </Text>
+                        ) : null}
+
+                        {/* Profile Tags */}
+                        <View style={styles.horizontalTagsContainer}>
+                            {zodiac ? (
+                                <View style={[styles.profileTag, styles.zodiacTag, styles.smallProfileTag]}>
+                                    <Text style={[styles.profileTagText, styles.smallProfileTagText]}>{zodiac}</Text>
+                                </View>
+                            ) : null}
+                            {/* Use both item property and getField fallback */}
+                            {(item.faith || faithField) ? (
+                                <View style={[styles.profileTag, styles.smallProfileTag]}>
+                                    <Text style={[styles.profileTagText, styles.smallProfileTagText]}>{item.faith || faithField}</Text>
+                                </View>
+                            ) : null}
+                            {(item.politics) ? (
+                                <View style={[styles.profileTag, styles.smallProfileTag]}>
+                                    <Text style={[styles.profileTagText, styles.smallProfileTagText]}>{item.politics}</Text>
+                                </View>
+                            ) : null}
+                            {(item.work || workField) ? (
+                                <View style={[styles.profileTag, styles.smallProfileTag]}>
+                                    <Text style={[styles.profileTagText, styles.smallProfileTagText]}>{item.work || workField}</Text>
+                                </View>
+                            ) : null}
+                            {(item.diet || dietField) ? (
+                                <View style={[styles.profileTag, styles.smallProfileTag]}>
+                                    <Text style={[styles.profileTagText, styles.smallProfileTagText]}>{item.diet || dietField}</Text>
+                                </View>
+                            ) : null}
+                        </View>
+
+                        <View style={styles.horizontalButtonsContainer}>
+                            {activeTab === 'liked' && (
+                                <TouchableOpacity
+                                    style={[styles.horizontalButton, styles.unlikeButtonHorizontal]}
+                                    onPress={() => handleUnlike(item.id)}
+                                >
+                                    <MaterialCommunityIcons name="heart-off" size={20} color="#F5B041" />
+                                    <Text style={styles.horizontalButtonLabel}>Cofnij</Text>
+                                </TouchableOpacity>
+                            )}
+
+                            {(activeTab === 'likesMe' || activeTab === 'matches') && (
+                                <TouchableOpacity
+                                    style={[styles.horizontalButton, styles.unlikeButtonHorizontal]}
+                                    onPress={() => handleSkip(item.id)}
+                                >
+                                    <MaterialCommunityIcons name="close" size={20} color="#FF6B6B" />
+                                    <Text style={styles.horizontalButtonLabel}>Usuń</Text>
+                                </TouchableOpacity>
+                            )}
+
+                            {activeTab === 'skipped' && (
+                                <TouchableOpacity
+                                    style={[styles.horizontalButton, { backgroundColor: '#3498DB' }]}
+                                    onPress={() => handleRestore(item.id)}
+                                >
+                                    <Ionicons name="refresh" size={20} color="#FFF" />
+                                    <Text style={[styles.horizontalButtonLabel, { color: '#FFF' }]}>Przywróć</Text>
+                                </TouchableOpacity>
+                            )}
+                            <TouchableOpacity
+                                style={[styles.horizontalButton, { backgroundColor: '#2ECC71' }]}
+                            >
+                                <Ionicons name="heart" size={24} color="#fff" />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.horizontalButton, styles.superMessageButtonHorizontal]}
+                                onPress={() => {
+                                    setSuperMessageRecipient(item);
+                                    setShowSuperMessageModal(true);
+                                }}
+                            >
+                                <Ionicons name="mail" size={22} color="#FFD700" />
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </Animated.View>
+            );
+        }
+
+        // Original vertical layout for search tab
         return (
-            <View style={styles.cardContainer}>
+            <Animated.View style={[
+                styles.cardContainer,
+                {
+                    transform: [{ translateX: anim.translateX }],
+                    opacity: anim.opacity,
+                }
+            ]}>
                 <TouchableOpacity
                     activeOpacity={0.9}
                     onPress={() => navigation.navigate('UserProfile', { userId: item.id })}
@@ -571,7 +1007,7 @@ const MembersScreen = () => {
                         <Text style={styles.superMessagePremiumLabel}>Premium</Text>
                     </TouchableOpacity>
                 </View>
-            </View >
+            </Animated.View>
         )
     };
 
@@ -699,6 +1135,7 @@ const MembersScreen = () => {
                         {activeTab === 'likesMe' && 'Nikt Cię jeszcze nie polubił'}
                         {activeTab === 'matches' && 'Nie masz jeszcze żadnych dopasowań'}
                         {activeTab === 'search' && 'Brak wyników'}
+                        {activeTab === 'skipped' && 'Jeszcze nikogo tu nie ma'}
                     </Text>
                 </View>
             )}
@@ -990,6 +1427,87 @@ const styles = StyleSheet.create({
     headerAvatar: { width: 40, height: 40, borderRadius: 20, borderWidth: 2, borderColor: '#fff' },
     notificationDot: { position: 'absolute', top: 10, right: 10, width: 8, height: 8, borderRadius: 4, backgroundColor: '#FF4757', borderWidth: 1, borderColor: '#3A3A3C' },
     listContent: { paddingBottom: 100 },
+
+    // Horizontal card styles for liked/likesMe/matches tabs
+    horizontalCard: {
+        flexDirection: 'row',
+        backgroundColor: '#2A2A3C',
+        borderRadius: 16,
+        marginHorizontal: 20,
+        marginBottom: 15,
+        overflow: 'hidden',
+    },
+    horizontalImageContainer: {
+        width: 140,
+        height: 180,
+        position: 'relative',
+    },
+    horizontalImage: {
+        width: '100%',
+        height: '100%',
+    },
+    horizontalNameOverlay: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.6)',
+        paddingHorizontal: 8,
+        paddingVertical: 8,
+    },
+    horizontalName: {
+        color: '#fff',
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    horizontalContent: {
+        flex: 1,
+        padding: 15,
+        // justifyContent: 'center', // Removed to let items flow from top
+    },
+    horizontalBio: {
+        color: '#ccc',
+        fontSize: 12,
+        lineHeight: 16,
+        marginBottom: 5,
+    },
+    horizontalTagsContainer: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        marginBottom: 12,
+    },
+    horizontalButtonsContainer: {
+        flexDirection: 'row',
+        justifyContent: 'flex-start',
+        gap: 12,
+        marginTop: 'auto', // Push to bottom
+    },
+    horizontalButton: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: '#fff',
+    },
+    unlikeButtonHorizontal: {
+        backgroundColor: '#fff',
+        flexDirection: 'row',
+        paddingHorizontal: 10,
+        width: 'auto',
+    },
+    horizontalButtonLabel: {
+        fontSize: 10,
+        fontWeight: '600',
+        color: '#F5B041',
+        marginLeft: 4,
+    },
+    superMessageButtonHorizontal: {
+        backgroundColor: '#1a1a2e',
+        borderWidth: 1,
+        borderColor: '#FFD700',
+    },
+
     cardContainer: {
         width: CARD_WIDTH,
         alignSelf: 'center',
@@ -1018,6 +1536,14 @@ const styles = StyleSheet.create({
         paddingVertical: 20,
         paddingBottom: 55,
         backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    },
+    cardOverlayCompact: {
+        paddingHorizontal: 10,
+        paddingVertical: 10,
+        paddingBottom: 10,
+    },
+    cardNameCompact: {
+        fontSize: 16,
     },
     zodiacBadge: {
         position: 'absolute',
@@ -1087,6 +1613,20 @@ const styles = StyleSheet.create({
         fontSize: 11,
         fontWeight: '500',
     },
+    smallProfileTag: {
+        paddingHorizontal: 5,
+        paddingVertical: 0,
+        height: 16,
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderRadius: 6,
+        marginRight: 3,
+        marginBottom: 2,
+    },
+    smallProfileTagText: {
+        fontSize: 9,
+        lineHeight: 12,
+    },
     numerologyTag: {
         backgroundColor: 'rgba(255, 193, 7, 0.3)',
         borderColor: '#ffc107',
@@ -1135,6 +1675,11 @@ const styles = StyleSheet.create({
         shadowRadius: 5,
         elevation: 5,
     },
+    actionButtonCompact: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+    },
     superMessageButton: {
         backgroundColor: '#1a1a2e',
         borderWidth: 2,
@@ -1148,6 +1693,18 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         color: '#FFD700',
         marginTop: 1,
+    },
+    unlikeButton: {
+        backgroundColor: '#fff',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    unlikeButtonLabel: {
+        fontSize: 8,
+        fontWeight: '600',
+        color: '#F5B041',
+        marginTop: 2,
     },
     premiumTabItem: {
         backgroundColor: '#1a1a2e',

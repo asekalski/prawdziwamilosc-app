@@ -63,7 +63,9 @@ export const getXProfileGroups = async (userId) => {
 
 export const getMatches = async () => {
     try {
-        const response = await client.get('/sk/v1/matches');
+        const response = await client.get('/sk/v1/matches', {
+            params: { populate_extras: true }
+        });
         return response.data;
     } catch (error) {
         throw error;
@@ -72,7 +74,9 @@ export const getMatches = async () => {
 
 export const getLikedUsers = async () => {
     try {
-        const response = await client.get('/sk/v1/liked');
+        const response = await client.get('/sk/v1/liked', {
+            params: { populate_extras: true }
+        });
         return response.data;
     } catch (error) {
         throw error;
@@ -81,7 +85,9 @@ export const getLikedUsers = async () => {
 
 export const getLikesMeUsers = async () => {
     try {
-        const response = await client.get('/sk/v1/likes-me');
+        const response = await client.get('/sk/v1/likes-me', {
+            params: { populate_extras: true }
+        });
         return response.data;
     } catch (error) {
         throw error;
