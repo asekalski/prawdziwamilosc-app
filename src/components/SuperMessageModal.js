@@ -52,8 +52,16 @@ const SuperMessageModal = ({ visible, recipientId, recipientName, onClose }) => 
             setMessage('');
             onClose();
         } catch (error) {
-            const errorMsg = error?.response?.data?.message || 'Nie udało się wysłać wiadomości.';
-            Alert.alert('❌ Błąd', errorMsg);
+            const errorData = error?.response?.data;
+            const errorMsg = errorData?.message || 'Nie udało się wysłać wiadomości.';
+            const errorCode = errorData?.code;
+
+            // Handle validation errors or already sent status gracefully
+            if (errorCode === 'already_sent' || errorCode === 'cooldown_active') {
+                Alert.alert('Informacja', errorMsg);
+            } else {
+                Alert.alert('❌ Błąd', errorMsg);
+            }
         } finally {
             setSending(false);
         }

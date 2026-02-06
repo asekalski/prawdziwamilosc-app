@@ -19,5 +19,8 @@
                 "resourceClass": "m-medium"
             }
         }
+    },
+    "submit": {
+        "production": {}
     }
 }

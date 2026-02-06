@@ -19,12 +19,15 @@ export const getSuperMessageStatus = async () => {
 export const sendSuperMessage = async (recipientId, message) => {
     try {
         const response = await client.post('/sk/v1/super-message/send', {
-            recipient_id: recipientId,
+            to_user_id: recipientId,
             message: message,
         });
         return response.data;
     } catch (error) {
-        console.error('Failed to send super message:', error);
+        // Only log to console if it's a real error (not 400 validation)
+        if (!error.response || error.response.status !== 400) {
+            console.error('Failed to send super message:', error);
+        }
         throw error;
     }
 };

@@ -135,3 +135,25 @@ export const deleteAccount = async () => {
         throw error;
     }
 };
+
+export const getMe = async () => {
+    try {
+        const response = await client.get('/sk/v1/member/me');
+        return response.data;
+    } catch (error) {
+        throw error;
+    }
+};
+
+export const updateOnboarding = async (formData) => {
+    try {
+        const response = await client.post('/sk/v1/onboarding/update', formData, {
+            headers: {
+                'Content-Type': 'multipart/form-data',
+            },
+        });
+        return response.data;
+    } catch (error) {
+        throw error;
+    }
+};

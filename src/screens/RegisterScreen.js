@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ImageBackground, ScrollView, Alert, Image } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ImageBackground, ScrollView, Alert, Image, KeyboardAvoidingView, Platform } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
@@ -15,46 +15,69 @@ const RegisterScreen = () => {
     const [loading, setLoading] = useState(false);
 
     const pickImage = async () => {
-        // Poproś o uprawnienia
-        const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        console.log('SK pickImage called');
+        try {
+            const mediaTypes = ImagePicker.MediaType ? ImagePicker.MediaType.Images : ImagePicker.MediaTypeOptions.Images;
 
-        if (permissionResult.granted === false) {
-            Alert.alert('Błąd', 'Potrzebujemy dostępu do galerii aby dodać zdjęcie profilowe');
-            return;
-        }
+            const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: mediaTypes,
+                allowsEditing: false, // Wyłączamy edycję dla galerii, bo to ona wyzwala komunikat "Limited Access" po wyborze.
+                aspect: [1, 1],
+                quality: 0.8,
+            });
 
-        const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            allowsEditing: true,
-            aspect: [1, 1],
-            quality: 0.8,
-        });
+            console.log('SK Library result:', result);
 
-        if (!result.canceled && result.assets[0]) {
-            setProfileImage(result.assets[0]);
+            if (!result.canceled && result.assets[0]) {
+                console.log('SK Image Picker (Library):', result.assets[0]);
+                setProfileImage(result.assets[0]);
+            }
+        } catch (error) {
+            console.error('SK pickImage ERROR:', error);
+            Alert.alert('Błąd', 'Wystąpił błąd podczas wybierania zdjęcia: ' + error.message);
         }
     };
 
     const takePhoto = async () => {
-        const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+        console.log('SK takePhoto called');
+        try {
+            const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+            console.log('SK Camera permission status:', permissionResult.status);
 
-        if (permissionResult.granted === false) {
-            Alert.alert('Błąd', 'Potrzebujemy dostępu do aparatu aby zrobić zdjęcie');
-            return;
-        }
+            if (permissionResult.granted === false) {
+                Alert.alert('Błąd', 'Potrzebujemy dostępu do aparatu aby zrobić zdjęcie');
+                return;
+            }
 
-        const result = await ImagePicker.launchCameraAsync({
-            allowsEditing: true,
-            aspect: [1, 1],
-            quality: 0.8,
-        });
+            const mediaTypes = ImagePicker.MediaType ? ImagePicker.MediaType.Images : ImagePicker.MediaTypeOptions.Images;
 
-        if (!result.canceled && result.assets[0]) {
-            setProfileImage(result.assets[0]);
+            const result = await ImagePicker.launchCameraAsync({
+                mediaTypes: mediaTypes,
+                allowsEditing: true,
+                aspect: [1, 1],
+                quality: 0.8,
+            });
+
+            console.log('SK Camera result:', result);
+
+            if (!result.canceled && result.assets[0]) {
+                console.log('SK Image Picker (Camera):', result.assets[0]);
+                setProfileImage(result.assets[0]);
+            }
+        } catch (error) {
+            console.error('SK takePhoto ERROR:', error);
+            Alert.alert('Błąd', 'Wystąpił błąd podczas robienia zdjęcia: ' + error.message);
         }
     };
 
-    const showImageOptions = () => {
+    const showImageOptions = async () => {
+        // Prosimy o uprawnienia na samym początku, zanim user w ogóle zobaczy wybór.
+        // To jest "najwcześniej" jak się da.
+        if (Platform.OS === 'ios') {
+            const libPerm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            console.log('SK Pre-check Library:', libPerm.status);
+        }
+
         Alert.alert(
             'Dodaj zdjęcie profilowe',
             'Wybierz źródło zdjęcia',
@@ -99,8 +122,9 @@ const RegisterScreen = () => {
 
         try {
             // Wywołaj WordPress API do rejestracji z obrazem
+            console.log('SK Registering user:', { username, email, hasImage: !!profileImage });
             const response = await registerUser(username, email, password, profileImage);
-            console.log('Registration successful:', response);
+            console.log('SK Registration response:', response);
 
             Alert.alert(
                 'Sprawdź email!',
@@ -126,96 +150,104 @@ const RegisterScreen = () => {
             resizeMode="cover"
         >
             <View style={styles.overlay}>
-                <ScrollView contentContainerStyle={styles.scrollContainer}>
-                    <View style={styles.formContainer}>
-                        <Text style={styles.title}>Stwórz Konto</Text>
-                        <Text style={styles.subtitle}>Znajdź swoją prawdziwą miłość</Text>
+                <KeyboardAvoidingView
+                    behavior={Platform.OS === "ios" ? "padding" : "height"}
+                    style={{ flex: 1 }}
+                >
+                    <ScrollView
+                        contentContainerStyle={styles.scrollContainer}
+                        keyboardShouldPersistTaps="handled"
+                    >
+                        <View style={styles.formContainer}>
+                            <Text style={styles.title}>Stwórz Konto</Text>
+                            <Text style={styles.subtitle}>Znajdź swoją prawdziwą miłość</Text>
 
-                        {/* Profile Image Picker */}
-                        <TouchableOpacity
-                            style={styles.imagePickerContainer}
-                            onPress={showImageOptions}
-                        >
-                            {profileImage ? (
-                                <Image
-                                    source={{ uri: profileImage.uri }}
-                                    style={styles.profileImage}
-                                />
-                            ) : (
-                                <View style={styles.imagePlaceholder}>
-                                    <Text style={styles.imagePlaceholderIcon}>📷</Text>
-                                    <Text style={styles.imagePlaceholderText}>Dodaj zdjęcie</Text>
-                                    <Text style={styles.imagePlaceholderSubtext}>(wymagane)</Text>
-                                </View>
-                            )}
-                        </TouchableOpacity>
-
-                        <TextInput
-                            placeholder="Nazwa użytkownika"
-                            value={username}
-                            onChangeText={setUsername}
-                            style={styles.input}
-                            placeholderTextColor="#999"
-                            autoCapitalize="none"
-                        />
-
-                        <TextInput
-                            placeholder="Email"
-                            value={email}
-                            onChangeText={setEmail}
-                            style={styles.input}
-                            placeholderTextColor="#999"
-                            keyboardType="email-address"
-                            autoCapitalize="none"
-                        />
-
-                        <TextInput
-                            placeholder="Hasło"
-                            value={password}
-                            onChangeText={setPassword}
-                            secureTextEntry
-                            style={styles.input}
-                            placeholderTextColor="#999"
-                        />
-
-                        <TextInput
-                            placeholder="Potwierdź hasło"
-                            value={confirmPassword}
-                            onChangeText={setConfirmPassword}
-                            secureTextEntry
-                            style={styles.input}
-                            placeholderTextColor="#999"
-                        />
-
-                        {/* Register Button */}
-                        <TouchableOpacity
-                            style={styles.buttonContainer}
-                            onPress={handleRegister}
-                            activeOpacity={0.8}
-                            disabled={loading}
-                        >
-                            <LinearGradient
-                                colors={['#FF6B9D', '#C06C84']}
-                                start={{ x: 0, y: 0 }}
-                                end={{ x: 1, y: 0 }}
-                                style={styles.gradient}
+                            {/* Profile Image Picker */}
+                            <TouchableOpacity
+                                style={styles.imagePickerContainer}
+                                onPress={showImageOptions}
                             >
-                                <Text style={styles.buttonText}>
-                                    {loading ? 'Rejestracja...' : 'Zarejestruj Się'}
-                                </Text>
-                            </LinearGradient>
-                        </TouchableOpacity>
+                                {profileImage ? (
+                                    <Image
+                                        source={{ uri: profileImage.uri }}
+                                        style={styles.profileImage}
+                                    />
+                                ) : (
+                                    <View style={styles.imagePlaceholder}>
+                                        <Text style={styles.imagePlaceholderIcon}>📷</Text>
+                                        <Text style={styles.imagePlaceholderText}>Dodaj zdjęcie</Text>
+                                        <Text style={styles.imagePlaceholderSubtext}>(wymagane)</Text>
+                                    </View>
+                                )}
+                            </TouchableOpacity>
 
-                        {/* Back to Login */}
-                        <TouchableOpacity
-                            style={styles.loginButtonContainer}
-                            onPress={() => navigation.navigate('Login')}
-                            activeOpacity={0.8}
-                        >
-                            <Text style={styles.loginButtonText}>Masz już konto? Zaloguj się</Text>
-                        </TouchableOpacity>
-                    </View>
-                </ScrollView>
+                            <TextInput
+                                placeholder="Nazwa użytkownika"
+                                value={username}
+                                onChangeText={setUsername}
+                                style={styles.input}
+                                placeholderTextColor="#999"
+                                autoCapitalize="none"
+                            />
+
+                            <TextInput
+                                placeholder="Email"
+                                value={email}
+                                onChangeText={setEmail}
+                                style={styles.input}
+                                placeholderTextColor="#999"
+                                keyboardType="email-address"
+                                autoCapitalize="none"
+                            />
+
+                            <TextInput
+                                placeholder="Hasło"
+                                value={password}
+                                onChangeText={setPassword}
+                                secureTextEntry
+                                style={styles.input}
+                                placeholderTextColor="#999"
+                            />
+
+                            <TextInput
+                                placeholder="Potwierdź hasło"
+                                value={confirmPassword}
+                                onChangeText={setConfirmPassword}
+                                secureTextEntry
+                                style={styles.input}
+                                placeholderTextColor="#999"
+                            />
+
+                            {/* Register Button */}
+                            <TouchableOpacity
+                                style={styles.buttonContainer}
+                                onPress={handleRegister}
+                                activeOpacity={0.8}
+                                disabled={loading}
+                            >
+                                <LinearGradient
+                                    colors={['#FF6B9D', '#C06C84']}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 0 }}
+                                    style={styles.gradient}
+                                >
+                                    <Text style={styles.buttonText}>
+                                        {loading ? 'Rejestracja...' : 'Zarejestruj Się'}
+                                    </Text>
+                                </LinearGradient>
+                            </TouchableOpacity>
+
+                            {/* Back to Login */}
+                            <TouchableOpacity
+                                style={styles.loginButtonContainer}
+                                onPress={() => navigation.navigate('Login')}
+                                activeOpacity={0.8}
+                            >
+                                <Text style={styles.loginButtonText}>Masz już konto? Zaloguj się</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </ScrollView>
+                </KeyboardAvoidingView>
             </View>
         </ImageBackground>
     );

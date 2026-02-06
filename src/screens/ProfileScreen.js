@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useContext } from 'react';
-import { View, Text, StyleSheet, Image, ActivityIndicator, ScrollView, Alert, TextInput, Modal, FlatList, Pressable, Linking } from 'react-native';
-import { getMember, updateXProfileField, updateMemberName, deleteAccount } from '../api/members';
+import { View, Text, StyleSheet, Image, ActivityIndicator, ScrollView, Alert, TextInput, Modal, FlatList, Pressable, Linking, Dimensions, TouchableOpacity } from 'react-native';
+import { getMember, updateXProfileField, updateMemberName, deleteAccount, getXProfileGroups } from '../api/members';
 import { addSkippedUser } from '../api/skipped';
 import { getThreads } from '../api/messages';
+import { getSuperMessageStatus } from '../api/superMessages';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme, useNavigation } from '@react-navigation/native';
-import { TouchableOpacity } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import SuperMessageModal from '../components/SuperMessageModal';
 
 const ProfileScreen = ({ route }) => {
     const { userInfo, logout } = useContext(AuthContext);
@@ -21,10 +22,25 @@ const ProfileScreen = ({ route }) => {
     const [showSelectModal, setShowSelectModal] = useState(false);
     const [selectOptions, setSelectOptions] = useState([]);
     const [currentEditingField, setCurrentEditingField] = useState(null);
+    const [selectedPhoto, setSelectedPhoto] = useState(null);
+    const [isPremium, setIsPremium] = useState(false);
+    const [showSuperMessageModal, setShowSuperMessageModal] = useState(false);
     const { colors } = useTheme();
 
     const userId = route?.params?.userId || userInfo?.id || 'me';
     const isOwnProfile = userId === 'me' || userId === userInfo?.id;
+
+    useEffect(() => {
+        const checkPremiumStatus = async () => {
+            try {
+                const status = await getSuperMessageStatus();
+                setIsPremium(status?.is_premium ?? false);
+            } catch (error) {
+                console.log('Could not check premium status');
+            }
+        };
+        checkPremiumStatus();
+    }, []);
 
     useEffect(() => {
         const fetchMember = async () => {
@@ -295,7 +311,7 @@ const ProfileScreen = ({ route }) => {
                     <Text style={styles.name}>{member.name}</Text>
                     <Text style={styles.mention}>@{member.mention_name}</Text>
 
-                    {userId !== 'me' && userId !== userInfo?.id && (
+                    {userId !== 'me' && userId !== userInfo?.id && member.is_matched && (
                         <TouchableOpacity
                             style={[styles.messageButton, messageLoading && styles.messageButtonDisabled]}
                             onPress={handleMessagePress}
@@ -309,7 +325,34 @@ const ProfileScreen = ({ route }) => {
                             <Text style={styles.messageButtonText}>Wyślij Wiadomość</Text>
                         </TouchableOpacity>
                     )}
+
+                    {!isOwnProfile && isPremium && (
+                        <TouchableOpacity
+                            style={[styles.messageButton, styles.superMessageButton]}
+                            onPress={() => setShowSuperMessageModal(true)}
+                        >
+                            <Ionicons name="mail" size={20} color="#FFD700" style={styles.messageIcon} />
+                            <Text style={styles.superMessagePremiumLabel}>SUPER WIADOMOŚĆ (PREMIUM)</Text>
+                        </TouchableOpacity>
+                    )}
                 </View>
+
+                {member.gallery && member.gallery.length > 0 && (
+                    <View style={styles.galleryContainer}>
+                        <Text style={styles.groupName}>Galeria zdjęć</Text>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.galleryScroll}>
+                            {member.gallery.map((photo, index) => (
+                                <TouchableOpacity
+                                    key={index}
+                                    onPress={() => setSelectedPhoto(photo.full || photo.url)}
+                                    style={styles.galleryItem}
+                                >
+                                    <Image source={{ uri: photo.url }} style={styles.galleryImage} />
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+                    </View>
+                )}
 
                 <View style={styles.contentContainer}>
                     {member.xprofile && member.xprofile.groups && member.xprofile.groups.map((group, index) => (
@@ -412,18 +455,26 @@ const ProfileScreen = ({ route }) => {
 
                             <TouchableOpacity
                                 style={[styles.contactButton, { marginBottom: 12 }]}
-                                onPress={() => Linking.openURL('https://prawdziwamilosc.pl/polityka-prywatnosci')}
+                                onPress={() => Linking.openURL('https://prawdziwamilosc.pl/polityka-prywatnosci.html')}
                             >
                                 <Ionicons name="shield-checkmark-outline" size={22} color="#FFFFFF" style={{ marginRight: 12 }} />
                                 <Text style={styles.contactButtonText}>Polityka Prywatności</Text>
                             </TouchableOpacity>
 
                             <TouchableOpacity
-                                style={styles.contactButton}
-                                onPress={() => Linking.openURL('https://prawdziwamilosc.pl/regulamin')}
+                                style={[styles.contactButton, { marginBottom: 12 }]}
+                                onPress={() => Linking.openURL('https://prawdziwamilosc.pl/regulamin.html')}
                             >
                                 <Ionicons name="document-text-outline" size={22} color="#FFFFFF" style={{ marginRight: 12 }} />
-                                <Text style={styles.contactButtonText}>Regulamin i Wytyczne</Text>
+                                <Text style={styles.contactButtonText}>Regulamin</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={styles.contactButton}
+                                onPress={() => Linking.openURL('https://prawdziwamilosc.pl/wytyczne.html')}
+                            >
+                                <Ionicons name="people-outline" size={22} color="#FFFFFF" style={{ marginRight: 12 }} />
+                                <Text style={styles.contactButtonText}>Wytyczne dla Społeczności</Text>
                             </TouchableOpacity>
                         </View>
                     )}
@@ -584,6 +635,35 @@ const ProfileScreen = ({ route }) => {
                     </View>
                 </Pressable>
             </Modal >
+
+            {/* Photo Lightbox */}
+            <Modal
+                visible={!!selectedPhoto}
+                transparent={true}
+                onRequestClose={() => setSelectedPhoto(null)}
+                animationType="fade"
+            >
+                <Pressable
+                    style={styles.lightboxOverlay}
+                    onPress={() => setSelectedPhoto(null)}
+                >
+                    <Ionicons name="close" size={32} color="#FFFFFF" style={styles.lightboxClose} />
+                    {selectedPhoto && (
+                        <Image
+                            source={{ uri: selectedPhoto }}
+                            style={styles.lightboxImage}
+                            resizeMode="contain"
+                        />
+                    )}
+                </Pressable>
+            </Modal>
+
+            <SuperMessageModal
+                visible={showSuperMessageModal}
+                onClose={() => setShowSuperMessageModal(false)}
+                recipientId={member?.id}
+                recipientName={member?.name}
+            />
         </>
     );
 };
@@ -686,6 +766,18 @@ const styles = StyleSheet.create({
     messageButtonText: {
         color: '#1C1C1E',
         fontSize: 16,
+        fontWeight: '700',
+        letterSpacing: 0.5,
+    },
+    superMessageButton: {
+        backgroundColor: '#1a1a2e',
+        borderWidth: 2,
+        borderColor: '#FFD700',
+        marginTop: 10,
+    },
+    superMessagePremiumLabel: {
+        color: '#FFD700',
+        fontSize: 14,
         fontWeight: '700',
         letterSpacing: 0.5,
     },
@@ -876,6 +968,45 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: '600',
         color: '#FFFFFF',
+    },
+    // Gallery Styles
+    galleryContainer: {
+        paddingHorizontal: 16,
+        marginBottom: 24,
+    },
+    galleryScroll: {
+        paddingRight: 16,
+    },
+    galleryItem: {
+        width: 100,
+        height: 125,
+        marginRight: 12,
+        borderRadius: 12,
+        overflow: 'hidden',
+        backgroundColor: 'rgba(255, 255, 255, 0.05)',
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.1)',
+    },
+    galleryImage: {
+        width: '100%',
+        height: '100%',
+    },
+    // Lightbox Styles
+    lightboxOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.95)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    lightboxImage: {
+        width: Dimensions.get('window').width,
+        height: Dimensions.get('window').height * 0.8,
+    },
+    lightboxClose: {
+        position: 'absolute',
+        top: 50,
+        right: 20,
+        zIndex: 10,
     },
 });
 

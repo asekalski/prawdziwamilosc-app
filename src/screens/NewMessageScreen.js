@@ -77,19 +77,23 @@ const NewMessageScreen = ({ route, navigation }) => {
             const response = await sendMessage(recipientId, recipientName, messageText);
 
             // Unify logic with ChatScreen - replace optimistic message immediately
-            if (response && (response.id || response.message_id)) {
-                setMessages(prev => prev.map(m => {
-                    if (m.id === tempMessage.id) {
-                        const realId = response.id || response.message_id;
-                        return {
-                            ...m,
-                            ...response,
-                            id: realId,
-                            isOptimistic: false
-                        };
-                    }
-                    return m;
-                }));
+            if (response) {
+                const realId = response.id || response.message_id || response.message?.id || response.message?.message_id;
+
+                if (realId) {
+                    setMessages(prev => prev.map(m => {
+                        if (m.id === tempMessage.id) {
+                            return {
+                                ...m,
+                                ...response,
+                                ...(response.message || {}),
+                                id: realId,
+                                isOptimistic: false
+                            };
+                        }
+                        return m;
+                    }));
+                }
             }
 
             // Refresh threads in background if needed, but don't force-reset messages if we just updated them

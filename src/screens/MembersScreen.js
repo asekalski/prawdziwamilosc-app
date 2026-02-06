@@ -803,19 +803,22 @@ const MembersScreen = ({ route }) => {
                             )}
 
                             {activeTab === 'skipped' && (
-                                <TouchableOpacity
-                                    style={[styles.horizontalButton, { backgroundColor: '#3498DB' }]}
-                                    onPress={() => handleRestore(item.id)}
-                                >
-                                    <Ionicons name="refresh" size={20} color="#FFF" />
-                                    <Text style={[styles.horizontalButtonLabel, { color: '#FFF' }]}>Przywróć</Text>
-                                </TouchableOpacity>
+                                <View style={styles.skippedButtonsContainer}>
+                                    <TouchableOpacity
+                                        style={styles.restoreButtonPill}
+                                        onPress={() => handleRestore(item.id)}
+                                    >
+                                        <Ionicons name="refresh" size={16} color="#FFF" />
+                                        <Text style={styles.restoreButtonText}>Przywróć</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={styles.likeButtonCircle}
+                                        onPress={() => handleLike(item.id)}
+                                    >
+                                        <Ionicons name="heart" size={28} color="#fff" />
+                                    </TouchableOpacity>
+                                </View>
                             )}
-                            <TouchableOpacity
-                                style={[styles.horizontalButton, { backgroundColor: '#2ECC71' }]}
-                            >
-                                <Ionicons name="heart" size={24} color="#fff" />
-                            </TouchableOpacity>
                             <TouchableOpacity
                                 style={[styles.horizontalButton, styles.superMessageButtonHorizontal]}
                                 onPress={() => {
@@ -1028,7 +1031,22 @@ const MembersScreen = ({ route }) => {
                                 styles.tabItem,
                                 activeTab === tab.id && styles.tabItemActive
                             ]}
-                            onPress={() => setActiveTab(tab.id)}
+                            onPress={() => {
+                                // Synchronize with Bottom Tab Navigation
+                                if (tab.id === 'search') {
+                                    navigation.navigate('Members');
+                                    if (route.name === 'Members') setActiveTab('search');
+                                } else if (tab.id === 'likesMe') {
+                                    navigation.navigate('LikesMe');
+                                    if (route.name === 'LikesMe') setActiveTab('likesMe');
+                                } else if (tab.id === 'skipped') {
+                                    navigation.navigate('Skipped');
+                                    if (route.name === 'Skipped') setActiveTab('skipped');
+                                } else {
+                                    // For tabs without a specific bottom tab (e.g. Matches, Liked), keep local state
+                                    setActiveTab(tab.id);
+                                }
+                            }}
                         >
                             <Text style={[
                                 styles.tabLabel,
@@ -1044,6 +1062,15 @@ const MembersScreen = ({ route }) => {
                     ))}
                 </ScrollView>
             </View>
+
+            {/* Skipped Info Text */}
+            {activeTab === 'skipped' && members.length > 0 && (
+                <View style={styles.skippedInfoContainer}>
+                    <Text style={styles.skippedInfoText}>
+                        Ci użytkownicy nie mogą do Ciebie pisać ani Cię lajkować.
+                    </Text>
+                </View>
+            )}
 
             {/* Empty state message */}
             {!loading && members.length === 0 && (
@@ -1413,7 +1440,7 @@ const styles = StyleSheet.create({
     horizontalButtonsContainer: {
         flexDirection: 'row',
         justifyContent: 'flex-start',
-        gap: 12,
+        gap: 8, // Reduced from 12
         marginTop: 'auto', // Push to bottom
     },
     horizontalButton: {
@@ -1600,6 +1627,62 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.1,
         shadowRadius: 5,
         elevation: 5,
+    },
+    // Styles for skipped tab buttons
+    skippedButtonsContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6, // Reduced from 8
+        justifyContent: 'center', // Changed from flex-end to center to avoid pushing
+        // Removed paddingRight to reduce gap to Premium button
+    },
+    restoreButtonPill: {
+        flexDirection: 'row',
+        backgroundColor: '#3498DB',
+        height: 44, // Match standard button height
+        borderRadius: 22,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 8,
+        gap: 1, // Ultra tight gap
+        elevation: 3,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 3,
+    },
+    restoreButtonText: {
+        color: '#FFF',
+        fontSize: 11, // Smallest readable text
+        fontWeight: '700',
+    },
+    likeButtonCircle: {
+        backgroundColor: '#2ECC71',
+        width: 44, // Match standard button size
+        height: 44,
+        borderRadius: 22,
+        alignItems: 'center',
+        justifyContent: 'center',
+        elevation: 3,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 3,
+    },
+    skippedInfoContainer: {
+        paddingHorizontal: 20,
+        paddingVertical: 10,
+        backgroundColor: 'rgba(232, 180, 184, 0.1)',
+        marginBottom: 10,
+        marginHorizontal: 10,
+        borderRadius: 10,
+        alignItems: 'center',
+    },
+    skippedInfoText: {
+        color: '#E8B4B8',
+        fontSize: 14,
+        textAlign: 'center',
+        lineHeight: 20,
     },
     actionButtonCompact: {
         width: 40,

@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useContext } from 'react';
-import { View, FlatList, StyleSheet, TouchableOpacity, Text, ActivityIndicator, Image, ScrollView } from 'react-native';
-import { getThreads } from '../api/messages';
+import React, { useState, useEffect, useContext, useRef } from 'react';
+import { View, FlatList, StyleSheet, TouchableOpacity, Text, ActivityIndicator, Image, ScrollView, Alert, Animated } from 'react-native';
+import { getThreads, deleteThread } from '../api/messages';
 import { getMatches } from '../api/members';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
+import { Swipeable } from 'react-native-gesture-handler';
 
 const MessagesScreen = () => {
     const [threads, setThreads] = useState([]);
@@ -17,29 +18,12 @@ const MessagesScreen = () => {
     const insets = useSafeAreaInsets();
     const { userInfo } = useContext(AuthContext);
 
+    // Keep track of open swipeables to close them when another opens
+    const swipeableRefs = useRef(new Map());
+
     const fetchThreads = async () => {
         setLoading(true);
         try {
-            // DEBUG: Discover API routes
-            console.log('Discovering API routes...');
-            try {
-                const rootResponse = await client.get('/wp-json/');
-                const routes = rootResponse.data.routes;
-                if (routes) {
-                    const bmRoutes = Object.keys(routes).filter(r => r.includes('better-messages'));
-                    console.log('Better Messages Routes:', bmRoutes);
-                    // Alert the user to these routes so we can see them
-                    if (bmRoutes.length > 0) {
-                        alert('Routes Found: ' + JSON.stringify(bmRoutes.slice(0, 5)));
-                        console.log('ALL ROUTES:', JSON.stringify(bmRoutes));
-                    } else {
-                        console.log('No Better Messages routes found in /wp-json/');
-                    }
-                }
-            } catch (e) {
-                console.log('Failed to discover routes:', e.message);
-            }
-
             const data = await getThreads();
             // Better Messages returns {threads: [...], messages: [...], users: [...]}
             // We need to extract and store all data
@@ -78,14 +62,55 @@ const MessagesScreen = () => {
         return unsubscribe;
     }, [navigation]);
 
+    const handleDelete = (threadId) => {
+        Alert.alert(
+            "Usuń konwersację",
+            "Czy na pewno chcesz usunąć tę konwersację? Tej operacji nie można cofnąć.",
+            [
+                { text: "Anuluj", style: "cancel" },
+                {
+                    text: "Usuń",
+                    style: "destructive",
+                    onPress: async () => {
+                        // Optimistic update
+                        const previousThreads = [...threads];
+                        setThreads(current => current.filter(t => t.thread_id !== threadId));
+
+                        try {
+                            await deleteThread(threadId);
+                        } catch (error) {
+                            console.error("Delete failed, rolling back", error);
+                            alert("Nie udało się usunąć konwersacji.");
+                            setThreads(previousThreads); // Rollback
+                        }
+                    }
+                }
+            ]
+        );
+    };
+
+    const renderRightActions = (progress, dragX, threadId) => {
+        const scale = dragX.interpolate({
+            inputRange: [-80, 0],
+            outputRange: [1, 0],
+            extrapolate: 'clamp',
+        });
+
+        return (
+            <TouchableOpacity onPress={() => handleDelete(threadId)}>
+                <View style={styles.deleteAction}>
+                    <Animated.View style={{ transform: [{ scale }] }}>
+                        <Ionicons name="trash-outline" size={30} color="#fff" />
+                    </Animated.View>
+                    <Animated.Text style={[styles.deleteText, { transform: [{ scale }] }]}>Usuń</Animated.Text>
+                </View>
+            </TouchableOpacity>
+        );
+    };
+
     const renderItem = ({ item }) => {
         // Better Messages uses different structure
         const thread = item;
-
-        // DEBUG: Log one thread to see structure
-        if (thread.thread_id === 22 || thread.thread_id === 18) {
-            console.log('Full Thread Object:', JSON.stringify(thread, null, 2));
-        }
 
         // Find last message from allMessages
         const threadMessages = allMessages.filter(m => m.thread_id === thread.thread_id);
@@ -97,11 +122,6 @@ const MessagesScreen = () => {
         const lastTime = lastMsg
             ? new Date(parseInt(lastMsg.created_at || lastMsg.date_sent)).toLocaleDateString()
             : (thread.lastTime ? new Date(parseInt(thread.lastTime)).toLocaleDateString() : '');
-
-        // Debug logs
-        // console.log('Thread:', thread.thread_id);
-        // console.log('Participants:', thread.participants);
-        // console.log('UserInfo ID:', userInfo?.id);
 
         // Get participant names (excluding current user) and their avatar
         let participantAvatar = null;
@@ -126,44 +146,61 @@ const MessagesScreen = () => {
         const threadTitle = participantNames || thread.title || thread.subject || 'Konwersacja';
 
         return (
-            <TouchableOpacity
-                style={styles.item}
-                onPress={() => navigation.navigate('Chat', {
-                    threadId: thread.thread_id,
-                    allMessages: allMessages,
-                    users: users,
-                    title: threadTitle // Pass resolved title
-                })}
-                activeOpacity={0.7}
+            <Swipeable
+                ref={(ref) => {
+                    if (ref && !swipeableRefs.current.has(item.thread_id)) {
+                        swipeableRefs.current.set(item.thread_id, ref);
+                    }
+                }}
+                renderRightActions={(progress, dragX) =>
+                    renderRightActions(progress, dragX, item.thread_id)
+                }
+                onSwipeableWillOpen={() => {
+                    // Close other open swipeables
+                    [...swipeableRefs.current.entries()].forEach(([key, ref]) => {
+                        if (key !== item.thread_id && ref) ref.close();
+                    });
+                }}
             >
-                <View style={styles.iconContainer}>
-                    {participantAvatar ? (
-                        <Image
-                            source={{ uri: participantAvatar }}
-                            style={styles.avatarImage}
-                        />
-                    ) : (
-                        <Ionicons name="chatbubble-ellipses" size={24} color="#2ECC71" />
-                    )}
-                    {thread.unread > 0 && (
-                        <View style={styles.unreadBadge}>
-                            <Text style={styles.unreadText}>{thread.unread}</Text>
-                        </View>
-                    )}
-                </View>
-                <View style={styles.content}>
-                    <Text style={styles.subject} numberOfLines={1}>
-                        {threadTitle || `Thread #${thread.thread_id}`}
-                    </Text>
-                    <Text style={styles.excerpt} numberOfLines={2}>
-                        {lastMessage}
-                    </Text>
-                </View>
-                <View style={styles.metaContainer}>
-                    <Text style={styles.date}>{lastTime}</Text>
-                    <Ionicons name="chevron-forward" size={20} color="#999" />
-                </View>
-            </TouchableOpacity>
+                <TouchableOpacity
+                    style={styles.item}
+                    onPress={() => navigation.navigate('Chat', {
+                        threadId: thread.thread_id,
+                        allMessages: allMessages,
+                        users: users,
+                        title: threadTitle // Pass resolved title
+                    })}
+                    activeOpacity={0.7}
+                >
+                    <View style={styles.iconContainer}>
+                        {participantAvatar ? (
+                            <Image
+                                source={{ uri: participantAvatar }}
+                                style={styles.avatarImage}
+                            />
+                        ) : (
+                            <Ionicons name="chatbubble-ellipses" size={24} color="#2ECC71" />
+                        )}
+                        {thread.unread > 0 && (
+                            <View style={styles.unreadBadge}>
+                                <Text style={styles.unreadText}>{thread.unread}</Text>
+                            </View>
+                        )}
+                    </View>
+                    <View style={styles.content}>
+                        <Text style={styles.subject} numberOfLines={1}>
+                            {threadTitle || `Thread #${thread.thread_id}`}
+                        </Text>
+                        <Text style={styles.excerpt} numberOfLines={2}>
+                            {lastMessage}
+                        </Text>
+                    </View>
+                    <View style={styles.metaContainer}>
+                        <Text style={styles.date}>{lastTime}</Text>
+                        <Ionicons name="chevron-forward" size={20} color="#999" />
+                    </View>
+                </TouchableOpacity>
+            </Swipeable>
         );
     };
 
@@ -274,6 +311,22 @@ const styles = StyleSheet.create({
         shadowRadius: 3,
         elevation: 2,
         alignItems: 'center',
+    },
+    // New delete action styles
+    deleteAction: {
+        backgroundColor: '#E74C3C',
+        justifyContent: 'center',
+        alignItems: 'center',
+        width: 80,
+        height: '100%',
+        marginBottom: 10, // Match item marginBottom
+        borderRadius: 15, // Match item borderRadius
+        marginLeft: 10,
+    },
+    deleteText: {
+        color: 'white',
+        fontWeight: '600',
+        padding: 5,
     },
     iconContainer: {
         width: 50,

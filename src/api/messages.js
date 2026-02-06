@@ -35,50 +35,79 @@ export const getThread = async (threadId) => {
 export const sendMessage = async (recipientId, subject, message) => {
     console.log('sendMessage called with:', { recipientId, subject, message });
 
+    let threadId = null;
+    let tryFallback = false;
+
     try {
         // Step 1: Get or create private thread with this user
-        console.log('Getting private thread with user:', recipientId);
+        console.log('Attempting to get private thread with user:', recipientId);
         const threadResponse = await client.post('/better-messages/v1/getPrivateThread', {
             user_id: recipientId
         });
-        console.log('getPrivateThread response:', threadResponse.data);
 
-        const threadId = threadResponse.data?.thread_id || threadResponse.data?.id || threadResponse.data;
+        threadId = threadResponse.data?.thread_id || threadResponse.data?.id;
 
+        // Robust extraction
         if (!threadId) {
-            throw new Error('Could not get thread ID');
+            if (typeof threadResponse.data === 'number' || typeof threadResponse.data === 'string') {
+                threadId = threadResponse.data;
+            } else if (threadResponse.data?.thread?.id) {
+                threadId = threadResponse.data.thread.id;
+            }
         }
 
-        // Step 2: Send message to this thread
-        console.log('Sending message to thread:', threadId);
-        const sendResponse = await client.post(`/better-messages/v1/thread/${threadId}/send`, {
-            message: message,
-            content: message,
-            tempId: Date.now().toString()
-        });
-        console.log('Send message response:', sendResponse.data);
-
-        return sendResponse.data;
+        if (!threadId) {
+            console.log('getPrivateThread did not return an ID, will try fallback');
+            tryFallback = true;
+        } else {
+            // Step 2: Send message to this thread
+            console.log('Sending message to thread:', threadId);
+            const sendResponse = await client.post(`/better-messages/v1/thread/${threadId}/send`, {
+                message: message,
+                content: message,
+                tempId: Date.now().toString()
+            });
+            return sendResponse.data;
+        }
     } catch (error) {
-        console.error('Better Messages send error:', error.response?.status, error.response?.data || error.message);
+        console.log('Initial getPrivateThread/send failed:', error.message);
+        tryFallback = true;
+    }
 
+    if (tryFallback) {
         // Fallback: try thread/new endpoint
         try {
-            console.log('Trying /thread/new endpoint');
+            console.log('Trying /thread/new endpoint as fallback');
             const newThreadResponse = await client.post('/better-messages/v1/thread/new', {
                 recipients: [recipientId],
                 message: message,
                 content: message,
                 subject: subject || 'Nowa wiadomość'
             });
-            console.log('thread/new response:', newThreadResponse.data);
+            console.log('thread/new response success');
             return newThreadResponse.data;
         } catch (fallbackError) {
-            console.error('thread/new also failed:', fallbackError.response?.status, fallbackError.response?.data);
+            console.error('All send methods failed:', fallbackError.response?.status, fallbackError.response?.data || fallbackError.message);
             throw fallbackError;
         }
     }
 }
+
+export const sendReply = async (threadId, message) => {
+    console.log(`sendReply called for thread ${threadId}:`, message);
+    try {
+        const response = await client.post(`/better-messages/v1/thread/${threadId}/send`, {
+            message: message,
+            content: message,
+            tempId: Date.now().toString()
+        });
+        return response.data;
+    } catch (error) {
+        console.error('Better Messages reply error:', error.response?.status, error.response?.data || error.message);
+        throw error;
+    }
+}
+
 
 export const replyToThread = async (threadId, message, recipientId) => {
     try {
@@ -99,6 +128,18 @@ export const replyToThread = async (threadId, message, recipientId) => {
         return response.data;
     } catch (error) {
         console.error('Reply failed:', error.response?.data || error.message);
+        throw error;
+    }
+}
+
+export const deleteThread = async (threadId) => {
+    try {
+        console.log(`Deleting thread ${threadId}`);
+        const response = await client.delete(`/sk/v1/thread/${threadId}`);
+        console.log('Thread deleted:', response.data);
+        return response.data;
+    } catch (error) {
+        console.error('Delete thread failed:', error.response?.data || error.message);
         throw error;
     }
 }

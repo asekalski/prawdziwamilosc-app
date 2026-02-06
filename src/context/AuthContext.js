@@ -16,8 +16,7 @@ export const AuthProvider = ({ children }) => {
             // We can't rely on client interceptor seamlessly yet because token might not be in storage
             // when we call this immediately after login. So we pass headers explicitly if needed,
             // or ensure storage is set.
-            const response = await client.get('/wp/v2/users/me', {
-                params: { context: 'view' },
+            const response = await client.get('/sk/v1/member/me', {
                 headers: { Authorization: `Bearer ${token}` }
             });
             return response.data;
@@ -45,6 +44,8 @@ export const AuthProvider = ({ children }) => {
                 nicename: data.user_nicename,
                 displayName: data.user_display_name,
                 id: userId,
+                avatar_urls: meData?.avatar_urls,
+                onboardingComplete: meData?.onboarding_complete ?? false,
             };
 
             setUserToken(token);
@@ -75,27 +76,30 @@ export const AuthProvider = ({ children }) => {
     const isLoggedIn = async () => {
         try {
             setIsLoading(true);
-            let userToken = await AsyncStorage.getItem('userToken');
-            let userInfo = await AsyncStorage.getItem('userInfo');
+            let token = await AsyncStorage.getItem('userToken');
+            let info = await AsyncStorage.getItem('userInfo');
 
-            if (userInfo) {
-                userInfo = JSON.parse(userInfo);
+            if (info) {
+                info = JSON.parse(info);
             }
 
-            // Self-healing: If token exists but ID is missing, try to fetch it
-            if (userToken && userInfo && !userInfo.id) {
-                console.log('User ID missing, attempting to fetch...');
-                const meData = await fetchMe(userToken);
-                if (meData?.id) {
-                    userInfo.id = meData.id;
-                    await AsyncStorage.setItem('userInfo', JSON.stringify(userInfo));
-                    console.log('User ID recovered:', userInfo.id);
+            if (token) {
+                // Always try to refresh critical data from backend on startup
+                const meData = await fetchMe(token);
+                if (meData) {
+                    const updatedInfo = {
+                        ...info,
+                        id: meData.id,
+                        avatar_urls: meData.avatar_urls,
+                        onboardingComplete: meData.onboarding_complete ?? false,
+                    };
+                    info = updatedInfo;
+                    await AsyncStorage.setItem('userInfo', JSON.stringify(updatedInfo));
+                    console.log('User data synced from server. Onboarding:', info.onboardingComplete);
                 }
-            }
 
-            if (userToken) {
-                setUserToken(userToken);
-                setUserInfo(userInfo);
+                setUserToken(token);
+                setUserInfo(info);
             }
             setIsLoading(false);
         } catch (e) {
@@ -121,8 +125,15 @@ export const AuthProvider = ({ children }) => {
         return () => clearInterval(interval);
     }, [userToken]);
 
+    const updateUserInfo = async (updates) => {
+        const newUserInfo = { ...userInfo, ...updates };
+        setUserInfo(newUserInfo);
+        await AsyncStorage.setItem('userInfo', JSON.stringify(newUserInfo));
+        console.log('AsyncStorage updated with:', JSON.stringify(updates));
+    };
+
     return (
-        <AuthContext.Provider value={{ login, logout, isLoading, userToken, userInfo }}>
+        <AuthContext.Provider value={{ login, logout, isLoading, userToken, userInfo, setUserInfo, updateUserInfo }}>
             {children}
         </AuthContext.Provider>
     );

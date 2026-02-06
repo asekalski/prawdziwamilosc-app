@@ -14,6 +14,7 @@ import ProfileScreen from '../screens/ProfileScreen';
 import ChatScreen from '../screens/ChatScreen';
 import SkippedScreen from '../screens/SkippedScreen';
 import FeedScreen from '../screens/FeedScreen';
+import OnboardingScreen from '../screens/OnboardingScreen';
 import { Ionicons } from '@expo/vector-icons';
 
 import NewMessageScreen from '../screens/NewMessageScreen';
@@ -58,6 +59,7 @@ const MainTabNavigator = () => {
             <Tab.Screen
                 name="Members"
                 component={MembersScreen}
+                initialParams={{ initialTab: 'search' }}
                 options={{
                     tabBarLabel: 'Home',
                     tabBarIcon: ({ color, size }) => <Ionicons name="home" size={size} color={color} />
@@ -84,7 +86,8 @@ const MainTabNavigator = () => {
             />
             <Tab.Screen
                 name="Skipped"
-                component={SkippedScreen}
+                component={MembersScreen}
+                initialParams={{ initialTab: 'skipped' }}
                 options={{
                     tabBarLabel: 'Usunięci',
                     tabBarIcon: ({ color, size }) => <Ionicons name="trash" size={size} color={color} />
@@ -111,7 +114,7 @@ const MainTabNavigator = () => {
 };
 
 const AppNavigator = () => {
-    const { userToken, isLoading } = useContext(AuthContext);
+    const { userToken, userInfo, isLoading } = useContext(AuthContext);
     const { theme } = useContext(ThemeContext);
 
     if (isLoading) {
@@ -146,7 +149,11 @@ const AppNavigator = () => {
                     </>
                 ) : (
                     <>
-                        <Stack.Screen name="Main" component={MainTabNavigator} options={{ headerShown: false }} />
+                        {userInfo?.onboardingComplete === false ? (
+                            <Stack.Screen name="Onboarding" component={OnboardingScreen} options={{ gestureEnabled: false }} />
+                        ) : (
+                            <Stack.Screen name="Main" component={MainTabNavigator} options={{ headerShown: false }} />
+                        )}
                         <Stack.Screen name="UserProfile" component={ProfileScreen} options={{ headerShown: false }} />
                         <Stack.Screen name="Chat" component={ChatScreen} options={{ headerShown: false }} />
                         <Stack.Screen name="NewMessage" component={NewMessageScreen} options={{ headerShown: false }} />

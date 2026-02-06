@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useContext } from 'react';
 import { View, Text, FlatList, StyleSheet, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator, Image } from 'react-native';
-import { getThreads, sendMessage } from '../api/messages';
+import { getThreads, sendMessage, sendReply } from '../api/messages';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -219,11 +219,7 @@ const ChatScreen = ({ route }) => {
         setTimeout(() => flatListRef.current?.scrollToOffset({ offset: 0, animated: true }), 100);
 
         try {
-            const response = await client.post(`/better-messages/v1/thread/${threadId}/send`, {
-                message: messageText,
-                content: messageText,
-                tempId: tempId
-            });
+            const response = await sendReply(threadId, messageText);
 
             // Immediately replace optimistic message with real confirmed message from server
             if (response.data) {
