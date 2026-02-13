@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { View, Text, StyleSheet, Image, ActivityIndicator, ScrollView, Alert, TextInput, Modal, FlatList, Pressable, Linking, Dimensions, TouchableOpacity } from 'react-native';
-import { getMember, updateXProfileField, updateMemberName, deleteAccount, getXProfileGroups } from '../api/members';
+import * as ImagePicker from 'expo-image-picker';
+import { getMember, updateXProfileField, updateMemberName, deleteAccount, getXProfileGroups, updateOnboarding } from '../api/members';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { addSkippedUser } from '../api/skipped';
 import { getThreads } from '../api/messages';
 import { getSuperMessageStatus } from '../api/superMessages';
@@ -9,9 +11,10 @@ import { useTheme, useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import SuperMessageModal from '../components/SuperMessageModal';
+import HeartLoader from '../components/HeartLoader';
 
 const ProfileScreen = ({ route }) => {
-    const { userInfo, logout } = useContext(AuthContext);
+    const { userInfo, logout, updateUserInfo } = useContext(AuthContext);
     const [member, setMember] = useState(null);
     const [loading, setLoading] = useState(true);
     const [messageLoading, setMessageLoading] = useState(false);
@@ -25,10 +28,16 @@ const ProfileScreen = ({ route }) => {
     const [selectedPhoto, setSelectedPhoto] = useState(null);
     const [isPremium, setIsPremium] = useState(false);
     const [showSuperMessageModal, setShowSuperMessageModal] = useState(false);
+    const [isUploading, setIsUploading] = useState(false);
+    const [showGalleryPicker, setShowGalleryPicker] = useState(false);
+    const [isSwappingAvatar, setIsSwappingAvatar] = useState(false);
+    const [showDatePicker, setShowDatePicker] = useState(false);
+    const [selectedDate, setSelectedDate] = useState(new Date());
+    const [dateFieldId, setDateFieldId] = useState(null);
     const { colors } = useTheme();
 
     const userId = route?.params?.userId || userInfo?.id || 'me';
-    const isOwnProfile = userId === 'me' || userId === userInfo?.id;
+    const isOwnProfile = userId === 'me' || String(userId) === String(userInfo?.id);
 
     useEffect(() => {
         const checkPremiumStatus = async () => {
@@ -47,10 +56,14 @@ const ProfileScreen = ({ route }) => {
             setLoading(true);
             try {
                 const data = await getMember(userId);
-                // getMember now includes full xprofile data from /sk/v1/member/{id} endpoint
+
+                // Ensure field 129 (Gender) hack if needed
+                if (isOwnProfile && data.xprofile?.groups?.length > 0) {
+                    // (keeping existing hack for now if it helps)
+                }
                 setMember(data);
             } catch (error) {
-                console.error(error);
+                console.error('Error fetching member:', error);
             } finally {
                 setLoading(false);
             }
@@ -58,6 +71,22 @@ const ProfileScreen = ({ route }) => {
 
         fetchMember();
     }, [userId]);
+
+    // Data extractor for badges/pills
+    const getBadgeVal = (fieldId) => {
+        if (member?.[fieldId === 346 ? 'faith' : fieldId === 351 ? 'politics' : fieldId === 356 ? 'work' : fieldId === 362 ? 'diet' : 'zodiac_sign']) {
+            return member[fieldId === 346 ? 'faith' : fieldId === 351 ? 'politics' : fieldId === 356 ? 'work' : fieldId === 362 ? 'diet' : 'zodiac_sign'];
+        }
+        if (!member?.xprofile?.groups) return null;
+        for (const group of member.xprofile.groups) {
+            for (const field of group.fields || []) {
+                if (field.id == fieldId) {
+                    return field.value?.raw || field.value?.rendered || field.value || null;
+                }
+            }
+        }
+        return null;
+    };
 
     const navigation = useNavigation();
     const insets = useSafeAreaInsets();
@@ -67,8 +96,19 @@ const ProfileScreen = ({ route }) => {
         if (!isOwnProfile) return;
 
         const fieldType = field.type?.name || field.type || 'textbox';
+
         const fieldOptions = field.options || field.type?.options || [];
         const isSelectType = ['selectbox', 'radio', 'multiselectbox', 'checkbox'].includes(fieldType);
+
+        // Handle date fields specially
+        if (fieldType === 'datebox') {
+            // Parse existing date or use current date
+            const existingDate = currentValue ? new Date(currentValue) : new Date();
+            setSelectedDate(isNaN(existingDate.getTime()) ? new Date() : existingDate);
+            setDateFieldId(field.id);
+            setShowDatePicker(true);
+            return;
+        }
 
         // Check if we have options to show
         const hasOptions = Array.isArray(fieldOptions)
@@ -99,6 +139,17 @@ const ProfileScreen = ({ route }) => {
             setCurrentEditingField(field);
             setEditingValue(currentValue);
             setShowSelectModal(true);
+        } else if (field.id == 129) {
+            // Force options for Gender if not provided
+            const options = [
+                { key: '1', label: 'Kobieta', value: 'Kobieta' },
+                { key: '2', label: 'Mężczyzna', value: 'Mężczyzna' }
+            ];
+            setSelectOptions(options);
+            setCurrentEditingField(field);
+            setEditingValue(currentValue);
+            setShowSelectModal(true);
+            return;
         } else {
             // Use TextInput for text fields
             setEditingFieldId(field.id);
@@ -125,6 +176,11 @@ const ProfileScreen = ({ route }) => {
                 console.log('XProfile fetch failed:', xprofileError);
             }
             setMember(data);
+
+            // If gender (129) was changed, update AuthContext userInfo
+            if (currentEditingField.id == 129) {
+                updateUserInfo({ gender: option.value });
+            }
         } catch (error) {
             console.error('Error saving field:', error);
             Alert.alert('Błąd', 'Nie udało się zapisać zmiany');
@@ -161,6 +217,11 @@ const ProfileScreen = ({ route }) => {
                 console.log('XProfile fetch failed:', xprofileError);
             }
             setMember(data);
+
+            // If gender (129) was changed, update AuthContext userInfo
+            if (fieldId == 129) {
+                updateUserInfo({ gender: editingValue });
+            }
         } catch (error) {
             console.error('Error saving field:', error);
             Alert.alert('Błąd', 'Nie udało się zapisać zmiany');
@@ -258,10 +319,135 @@ const ProfileScreen = ({ route }) => {
 
 
 
-    const handleBlockPress = async () => {
+    const handlePickImage = async () => {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+            Alert.alert('Błąd', 'Potrzebujemy dostępu do galerii zdjęć, aby dodać zdjęcia do profilu.');
+            return;
+        }
+
+        let result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            allowsEditing: true,
+            aspect: [4, 5],
+            quality: 0.8,
+        });
+
+        if (!result.canceled && result.assets[0]) {
+            uploadPhoto(result.assets[0]);
+        }
+    };
+
+    const uploadPhoto = async (photoAsset) => {
+        setIsUploading(true);
+        try {
+            const data = new FormData();
+
+            // Find the first empty slot (2-6 because 1 is avatar)
+            const currentGalleryCount = member.gallery?.length || 0;
+            const nextSlot = currentGalleryCount + 2; // +1 for 1-based, +1 for skipping avatar
+
+            if (nextSlot > 6) {
+                Alert.alert('Limit zdjęć', 'Możesz mieć maksymalnie 6 zdjęć (wliczając profilowe).');
+                setIsUploading(false);
+                return;
+            }
+
+            const uriParts = photoAsset.uri.split('.');
+            const fileType = uriParts[uriParts.length - 1];
+            data.append(`photo_${nextSlot}`, {
+                uri: photoAsset.uri,
+                name: `photo_${nextSlot}.${fileType}`,
+                type: `image/${fileType}`,
+            });
+
+            const result = await updateOnboarding(data);
+            if (result.success) {
+                // Refetch member data
+                const updatedData = await getMember(userId);
+                setMember(updatedData);
+            } else {
+                Alert.alert('Błąd', 'Nie udało się przesłać zdjęcia.');
+            }
+        } catch (error) {
+            console.error('Upload photo error:', error);
+            Alert.alert('Błąd', 'Wystąpił błąd podczas przesyłania zdjęcia.');
+        } finally {
+            setIsUploading(false);
+        }
+    };
+
+    const handleSetAvatar = async (photoId) => {
+        try {
+            setIsSwappingAvatar(true);
+            const formData = new FormData();
+            formData.append('set_avatar_id', photoId);
+
+            await updateOnboarding(formData);
+
+            // Refresh member data
+            const data = await getMember(userId);
+            setMember(data);
+            setShowGalleryPicker(false);
+        } catch (error) {
+            console.error('Error swapping avatar:', error);
+            Alert.alert("Błąd", "Nie udało się zmienić zdjęcia profilowego.");
+        } finally {
+            setIsSwappingAvatar(false);
+        }
+    };
+
+    const handleDeletePhoto = async (photoId) => {
+        Alert.alert(
+            "Usuń zdjęcie",
+            "Czy na pewno chcesz usunąć to zdjęcie z galerii?",
+            [
+                { text: "Anuluj", style: "cancel" },
+                {
+                    text: "Usuń",
+                    style: "destructive",
+                    onPress: async () => {
+                        try {
+                            setIsUploading(true);
+                            const formData = new FormData();
+                            formData.append('delete_photo_id', photoId);
+
+                            await updateOnboarding(formData);
+
+                            // Refresh profile data
+                            const updatedData = await getMember(userId);
+                            setMember(updatedData);
+
+                            Alert.alert("Sukces", "Zdjęcie zostało usunięte.");
+                        } catch (error) {
+                            console.error('Error deleting photo:', error);
+                            Alert.alert("Błąd", "Nie udało się usunąć zdjęcia.");
+                        } finally {
+                            setIsUploading(false);
+                        }
+                    }
+                }
+            ]
+        );
+    };
+
+    const handleAllowChat = async () => {
+        if (!member) return;
+        try {
+            const { sendMessage } = require('../api/messages');
+            await sendMessage(member.id, 'Prawdziwa Miłość', 'Użytkowniczka pozwala Ci ze sobą porozmawiać.');
+            Alert.alert('Sukces', `Pozwoliłaś użytkownikowi ${member.name} na rozmowę.`);
+        } catch (error) {
+            console.log('Error allowing chat:', error);
+            Alert.alert('Błąd', 'Nie udało się wysłać powiadomienia.');
+        }
+    };
+
+    const handleBlockPress = () => {
+        if (!member) return;
         Alert.alert(
             'Zablokuj użytkownika',
-            'Czy na pewno chcesz zablokować tego użytkownika? Nie będziesz go już widzieć w wynikach wyszukiwania.',
+            `Czy na pewno chcesz zablokować użytkownika ${member.name}? Nie będziesz już widzieć tej osoby, a ona nie będzie mogła się z Tobą kontaktować.`,
             [
                 { text: 'Anuluj', style: 'cancel' },
                 {
@@ -270,10 +456,10 @@ const ProfileScreen = ({ route }) => {
                     onPress: async () => {
                         try {
                             await addSkippedUser(member.id);
-                            Alert.alert('Zablokowano', 'Użytkownik został zablokowany.');
+                            Alert.alert('Sukces', 'Użytkownik został zablokowany.');
                             navigation.goBack();
                         } catch (error) {
-                            console.error('Error blocking user:', error);
+                            console.error('Failed to block user:', error);
                             Alert.alert('Błąd', 'Nie udało się zablokować użytkownika.');
                         }
                     }
@@ -282,8 +468,27 @@ const ProfileScreen = ({ route }) => {
         );
     };
 
+    const getGender = (user) => {
+        if (!user || !user.xprofile || !user.xprofile.groups) return null;
+        for (const group of user.xprofile.groups) {
+            if (group.fields) {
+                const fields = Array.isArray(group.fields) ? group.fields : Object.values(group.fields);
+                for (const field of fields) {
+                    if (field.id == 129) {
+                        return field.value?.raw || field.value?.rendered || field.value;
+                    }
+                }
+            }
+        }
+        return null;
+    };
+
     if (loading) {
-        return <View style={styles.center}><ActivityIndicator /></View>;
+        return (
+            <View style={styles.center}>
+                <HeartLoader size={80} color="#FF6B9D" />
+            </View>
+        );
     }
 
     if (!member) {
@@ -307,9 +512,50 @@ const ProfileScreen = ({ route }) => {
                 </View>
 
                 <View style={styles.header}>
-                    <Image source={{ uri: member.hires_avatar?.large || member.hires_avatar?.full || member.avatar_urls?.full }} style={styles.avatar} />
+                    <View style={styles.avatarContainer}>
+                        <Image source={{ uri: member.hires_avatar?.large || member.hires_avatar?.full || member.avatar_urls?.full }} style={styles.avatar} />
+                        {isOwnProfile && (
+                            <TouchableOpacity
+                                style={styles.changeAvatarButton}
+                                onPress={() => setShowGalleryPicker(true)}
+                            >
+                                <Ionicons name="camera" size={14} color="#FFFFFF" />
+                                <Text style={styles.changeAvatarText}>Zmień</Text>
+                            </TouchableOpacity>
+                        )}
+                    </View>
                     <Text style={styles.name}>{member.name}</Text>
                     <Text style={styles.mention}>@{member.mention_name}</Text>
+
+                    {/* Profile Badges (Pills) */}
+                    <View style={styles.profileTagsContainer}>
+                        {getBadgeVal(303) ? (
+                            <View style={[styles.profileTag, styles.zodiacTag]}>
+                                <Text style={styles.profileTagText}>{getBadgeVal(303)}</Text>
+                            </View>
+                        ) : null}
+                        {getBadgeVal(346) ? (
+                            <View style={styles.profileTag}>
+                                <Text style={styles.profileTagText}>{getBadgeVal(346)}</Text>
+                            </View>
+                        ) : null}
+                        {getBadgeVal(351) ? (
+                            <View style={styles.profileTag}>
+                                <Text style={styles.profileTagText}>{getBadgeVal(351)}</Text>
+                            </View>
+                        ) : null}
+                        {getBadgeVal(356) ? (
+                            <View style={styles.profileTag}>
+                                <Text style={styles.profileTagText}>{getBadgeVal(356)}</Text>
+                            </View>
+                        ) : null}
+                        {getBadgeVal(362) ? (
+                            <View style={styles.profileTag}>
+                                <Text style={styles.profileTagText}>{getBadgeVal(362)}</Text>
+                            </View>
+                        ) : null}
+                    </View>
+
 
                     {userId !== 'me' && userId !== userInfo?.id && member.is_matched && (
                         <TouchableOpacity
@@ -335,21 +581,54 @@ const ProfileScreen = ({ route }) => {
                             <Text style={styles.superMessagePremiumLabel}>SUPER WIADOMOŚĆ (PREMIUM)</Text>
                         </TouchableOpacity>
                     )}
+
+                    {!isOwnProfile && userInfo?.gender?.toLowerCase() === 'kobieta' && getGender(member)?.toLowerCase() === 'mężczyzna' && (
+                        <TouchableOpacity
+                            style={[styles.messageButton, styles.allowChatButtonHeader]}
+                            onPress={handleAllowChat}
+                        >
+                            <Ionicons name="checkmark" size={24} color="#808000" style={styles.messageIcon} />
+                            <Text style={styles.allowChatButtonTextHeader}>Pozwól porozmawiać</Text>
+                        </TouchableOpacity>
+                    )}
                 </View>
 
-                {member.gallery && member.gallery.length > 0 && (
+                {(member.gallery?.length > 0 || isOwnProfile) && (
                     <View style={styles.galleryContainer}>
-                        <Text style={styles.groupName}>Galeria zdjęć</Text>
+                        <View style={styles.galleryHeader}>
+                            <Text style={styles.groupName}>Galeria zdjęć</Text>
+                            {isUploading && (
+                                <ActivityIndicator size="small" color="#E8B4B8" style={{ marginLeft: 10, marginBottom: 18 }} />
+                            )}
+                        </View>
                         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.galleryScroll}>
-                            {member.gallery.map((photo, index) => (
-                                <TouchableOpacity
-                                    key={index}
-                                    onPress={() => setSelectedPhoto(photo.full || photo.url)}
-                                    style={styles.galleryItem}
-                                >
-                                    <Image source={{ uri: photo.url }} style={styles.galleryImage} />
-                                </TouchableOpacity>
+                            {member.gallery?.map((photo, index) => (
+                                <View key={index} style={styles.galleryItemWrapper}>
+                                    <TouchableOpacity
+                                        onPress={() => setSelectedPhoto(photo.full || photo.url)}
+                                        style={styles.galleryItem}
+                                    >
+                                        <Image source={{ uri: photo.url }} style={styles.galleryImage} />
+                                    </TouchableOpacity>
+                                    {isOwnProfile && (
+                                        <TouchableOpacity
+                                            style={styles.deletePhotoButton}
+                                            onPress={() => handleDeletePhoto(photo.id)}
+                                        >
+                                            <Ionicons name="close-circle" size={26} color="#FF6B6B" />
+                                        </TouchableOpacity>
+                                    )}
+                                </View>
                             ))}
+                            {isOwnProfile && (member.gallery?.length || 0) < 5 && (
+                                <TouchableOpacity
+                                    style={[styles.galleryItem, styles.addPhotoButton]}
+                                    onPress={handlePickImage}
+                                    disabled={isUploading}
+                                >
+                                    <Ionicons name="add" size={32} color="#E8B4B8" />
+                                </TouchableOpacity>
+                            )}
                         </ScrollView>
                     </View>
                 )}
@@ -359,7 +638,7 @@ const ProfileScreen = ({ route }) => {
                         <View key={index} style={styles.group}>
                             <Text style={styles.groupName}>{group.name}</Text>
                             {group.fields && Array.isArray(group.fields) && group.fields.length > 0 ? (
-                                group.fields.map((field, fIndex) => {
+                                group.fields.filter(f => ![303, 346, 351, 356, 362].includes(parseInt(f.id))).map((field, fIndex) => {
                                     // Extract value from various possible locations
                                     const fieldValue = field.value?.raw ||
                                         field.value?.rendered ||
@@ -368,8 +647,11 @@ const ProfileScreen = ({ route }) => {
                                         field.value ||
                                         '';
 
-                                    // Only show fields with non-empty values
-                                    if (!fieldValue || fieldValue === '') {
+
+                                    // Only show fields with non-empty values, 
+                                    // unless it's our own profile so we can fill them in
+                                    const showAnyway = isOwnProfile;
+                                    if ((!fieldValue || fieldValue === '') && !showAnyway) {
                                         return null;
                                     }
 
@@ -406,7 +688,9 @@ const ProfileScreen = ({ route }) => {
                                                         styles.value,
                                                         isOwnProfile && styles.editableValue
                                                     ]}>
-                                                        {fieldValue}
+                                                        {fieldType === 'datebox' && fieldValue
+                                                            ? new Date(fieldValue).toLocaleDateString('pl-PL')
+                                                            : fieldValue}
                                                     </Text>
                                                 </TouchableOpacity>
                                             )}
@@ -586,6 +870,33 @@ const ProfileScreen = ({ route }) => {
                 </View >
             </ScrollView >
 
+            {showDatePicker && (
+                <DateTimePicker
+                    value={selectedDate}
+                    mode="date"
+                    display="spinner"
+                    maximumDate={new Date()} // Prevent future birth dates
+                    onChange={(event, date) => {
+                        setShowDatePicker(false);
+                        if (event.type === 'set' && date) {
+                            // Format: YYYY-MM-DD HH:mm:ss (BuddyPress expects this)
+                            const formatted = date.toISOString().slice(0, 19).replace('T', ' ');
+                            setSavingFieldId(dateFieldId);
+                            updateXProfileField(dateFieldId, formatted)
+                                .then(async () => {
+                                    const data = await getMember(userId);
+                                    setMember(data);
+                                })
+                                .catch(err => {
+                                    console.error('Error saving date:', err);
+                                    Alert.alert('Błąd', 'Nie udało się zapisać daty');
+                                })
+                                .finally(() => setSavingFieldId(null));
+                        }
+                    }}
+                />
+            )}
+
             {/* Select Options Modal */}
             < Modal
                 visible={showSelectModal}
@@ -636,12 +947,11 @@ const ProfileScreen = ({ route }) => {
                 </Pressable>
             </Modal >
 
-            {/* Photo Lightbox */}
+            {/* Image Preview Modal */}
             <Modal
                 visible={!!selectedPhoto}
                 transparent={true}
                 onRequestClose={() => setSelectedPhoto(null)}
-                animationType="fade"
             >
                 <Pressable
                     style={styles.lightboxOverlay}
@@ -655,6 +965,68 @@ const ProfileScreen = ({ route }) => {
                             resizeMode="contain"
                         />
                     )}
+                </Pressable>
+            </Modal>
+
+            {/* Gallery Picker Modal for Avatar */}
+            <Modal
+                visible={showGalleryPicker}
+                transparent={true}
+                animationType="slide"
+                onRequestClose={() => setShowGalleryPicker(false)}
+            >
+                <Pressable
+                    style={styles.modalOverlay}
+                    onPress={() => setShowGalleryPicker(false)}
+                >
+                    <Pressable
+                        style={[styles.modalContent, { maxHeight: '75%' }]}
+                        onPress={(e) => e.stopPropagation()}
+                    >
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>Wybierz zdjęcie profilowe</Text>
+                            <TouchableOpacity
+                                onPress={() => setShowGalleryPicker(false)}
+                                style={styles.modalCloseButton}
+                            >
+                                <Ionicons name="close" size={24} color="#FFFFFF" />
+                            </TouchableOpacity>
+                        </View>
+
+                        {isSwappingAvatar ? (
+                            <View style={{ padding: 40, alignItems: 'center' }}>
+                                <ActivityIndicator size="large" color="#E8B4B8" />
+                                <Text style={{ color: '#FFFFFF', marginTop: 10 }}>Zmieniam...</Text>
+                            </View>
+                        ) : (
+                            <FlatList
+                                data={member.gallery || []}
+                                keyExtractor={(item) => item.id.toString()}
+                                numColumns={3}
+                                contentContainerStyle={{ padding: 12, paddingBottom: 40 }}
+                                renderItem={({ item }) => (
+                                    <TouchableOpacity
+                                        style={styles.galleryPickerItem}
+                                        onPress={() => handleSetAvatar(item.id)}
+                                    >
+                                        <Image
+                                            source={{ uri: item.url }}
+                                            style={styles.galleryPickerImage}
+                                            resizeMode="cover"
+                                        />
+                                    </TouchableOpacity>
+                                )}
+                                ListEmptyComponent={
+                                    <View style={{ padding: 30, alignItems: 'center' }}>
+                                        <Ionicons name="images-outline" size={48} color="rgba(255,255,255,0.2)" />
+                                        <Text style={{ textAlign: 'center', color: '#8E8E93', marginTop: 12, lineHeight: 22 }}>
+                                            Brak zdjęć w galerii. Dodaj zdjęcia poniżej, aby móc je ustawić jako profilowe.
+                                        </Text>
+                                    </View>
+                                }
+                            />
+                        )}
+                    </Pressable>
                 </Pressable>
             </Modal>
 
@@ -724,7 +1096,7 @@ const styles = StyleSheet.create({
         width: 130,
         height: 130,
         borderRadius: 65,
-        marginBottom: 20,
+        marginBottom: 0,
         borderWidth: 4,
         borderColor: '#E8B4B8',
         shadowColor: '#E8B4B8',
@@ -972,10 +1344,12 @@ const styles = StyleSheet.create({
     // Gallery Styles
     galleryContainer: {
         paddingHorizontal: 16,
+        marginTop: 20,
         marginBottom: 24,
     },
     galleryScroll: {
         paddingRight: 16,
+        paddingTop: 12, // More padding to accommodate the delete icons hanging above the items
     },
     galleryItem: {
         width: 100,
@@ -990,6 +1364,69 @@ const styles = StyleSheet.create({
     galleryImage: {
         width: '100%',
         height: '100%',
+    },
+    galleryHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    galleryItemWrapper: {
+        position: 'relative',
+        marginRight: 12,
+    },
+    deletePhotoButton: {
+        position: 'absolute',
+        top: -6,
+        right: -6,
+        zIndex: 20,
+        backgroundColor: '#1A1A1A', // Dark background for contrast, matching app theme
+        borderRadius: 13,
+        padding: 0,
+    },
+    avatarContainer: {
+        position: 'relative',
+        marginBottom: 20,
+    },
+    changeAvatarButton: {
+        position: 'absolute',
+        bottom: 0,
+        right: 0,
+        backgroundColor: '#E8B4B8',
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 12,
+        borderWidth: 2,
+        borderColor: '#1C1C1E',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 3.84,
+        elevation: 5,
+    },
+    changeAvatarText: {
+        color: '#1C1C1E',
+        fontSize: 10,
+        fontWeight: 'bold',
+        marginLeft: 4,
+    },
+    galleryPickerItem: {
+        flex: 1 / 3,
+        aspectRatio: 1,
+        padding: 4,
+    },
+    galleryPickerImage: {
+        width: '100%',
+        height: '100%',
+        borderRadius: 8,
+    },
+    addPhotoButton: {
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderStyle: 'dashed',
+        borderWidth: 2,
+        borderColor: 'rgba(232, 180, 184, 0.5)',
+        backgroundColor: 'rgba(232, 180, 184, 0.05)',
     },
     // Lightbox Styles
     lightboxOverlay: {
@@ -1008,6 +1445,68 @@ const styles = StyleSheet.create({
         right: 20,
         zIndex: 10,
     },
+    allowChatButtonHeader: {
+        backgroundColor: '#1A1A1A',
+        flexDirection: 'row',
+        paddingVertical: 12,
+        paddingHorizontal: 25,
+        borderRadius: 25,
+        alignItems: 'center',
+        marginTop: 10,
+        width: '80%',
+        justifyContent: 'center',
+        borderWidth: 1.5,
+        borderColor: '#D4AF37',
+    },
+    allowChatButtonTextHeader: {
+        color: '#D4AF37',
+        fontWeight: 'bold',
+        fontSize: 15,
+    },
+    allowChatIconContainerHeader: {
+        position: 'relative',
+        marginRight: 10,
+        width: 24,
+        height: 24,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    allowChatCheckmarkHeader: {
+        position: 'absolute',
+        bottom: -2,
+        right: -2,
+        backgroundColor: '#fff',
+        borderRadius: 6,
+        padding: 1,
+    },
+    profileTagsContainer: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        marginTop: 15,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+    },
+    profileTag: {
+        backgroundColor: 'rgba(255, 255, 255, 0.15)',
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: 15,
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.3)',
+        marginRight: 6,
+        marginBottom: 8,
+    },
+    profileTagText: {
+        color: '#fff',
+        fontSize: 12,
+        fontWeight: '500',
+    },
+    zodiacTag: {
+        backgroundColor: 'rgba(212, 175, 55, 0.2)',
+        borderColor: '#d4af37',
+    },
 });
 
 export default ProfileScreen;
+

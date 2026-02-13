@@ -15,29 +15,38 @@ import ChatScreen from '../screens/ChatScreen';
 import SkippedScreen from '../screens/SkippedScreen';
 import FeedScreen from '../screens/FeedScreen';
 import OnboardingScreen from '../screens/OnboardingScreen';
+import NotificationsScreen from '../screens/NotificationsScreen';
 import { Ionicons } from '@expo/vector-icons';
+import HeartLoader from '../components/HeartLoader';
+import { View } from 'react-native';
+import { createNavigationContainerRef } from '@react-navigation/native';
+import { setupNotificationInteraction } from '../services/NotificationService';
 
 import NewMessageScreen from '../screens/NewMessageScreen';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
+const navigationRef = createNavigationContainerRef();
 
 const MainTabNavigator = () => {
+    const { unreadMessagesCount } = useContext(AuthContext);
     const [likesCount, setLikesCount] = React.useState(0);
 
     React.useEffect(() => {
-        const fetchLikesCount = async () => {
+        const fetchData = async () => {
             try {
+                // Fetch Likes count
                 const { getLikesMeUsers } = require('../api/members');
-                const data = await getLikesMeUsers();
-                setLikesCount(Array.isArray(data) ? data.length : 0);
+                const likesData = await getLikesMeUsers();
+                setLikesCount(Array.isArray(likesData) ? likesData.length : 0);
             } catch (error) {
                 console.log('Error fetching likes count:', error);
             }
         };
-        fetchLikesCount();
-        // Refresh every 60 seconds
-        const interval = setInterval(fetchLikesCount, 60000);
+
+        fetchData();
+        // Refresh every 30 seconds
+        const interval = setInterval(fetchData, 30000);
         return () => clearInterval(interval);
     }, []);
 
@@ -98,7 +107,9 @@ const MainTabNavigator = () => {
                 component={MessagesScreen}
                 options={{
                     tabBarLabel: 'Chat',
-                    tabBarIcon: ({ color, size }) => <Ionicons name="chatbubbles" size={size} color={color} />
+                    tabBarIcon: ({ color, size }) => <Ionicons name="chatbubbles" size={size} color={color} />,
+                    tabBarBadge: unreadMessagesCount > 0 ? (unreadMessagesCount > 99 ? '99+' : unreadMessagesCount) : undefined,
+                    tabBarBadgeStyle: unreadMessagesCount > 0 ? { backgroundColor: '#FF6B9D', color: '#fff' } : undefined,
                 }}
             />
             <Tab.Screen
@@ -117,8 +128,28 @@ const AppNavigator = () => {
     const { userToken, userInfo, isLoading } = useContext(AuthContext);
     const { theme } = useContext(ThemeContext);
 
+    React.useEffect(() => {
+        if (navigationRef.isReady()) {
+            const subscription = setupNotificationInteraction(navigationRef);
+            return () => subscription.remove();
+        } else {
+            // If not ready, wait and try again or use a listener
+            const interval = setInterval(() => {
+                if (navigationRef.isReady()) {
+                    const subscription = setupNotificationInteraction(navigationRef);
+                    clearInterval(interval);
+                }
+            }, 500);
+            return () => clearInterval(interval);
+        }
+    }, [userToken]);
+
     if (isLoading) {
-        return null; // Or a splash screen
+        return (
+            <View style={{ flex: 1, backgroundColor: '#1a1a2e', justifyContent: 'center', alignItems: 'center' }}>
+                <HeartLoader size={80} color="#FF6B9D" />
+            </View>
+        );
     }
 
     const linking = {
@@ -139,7 +170,7 @@ const AppNavigator = () => {
     };
 
     return (
-        <NavigationContainer theme={theme} linking={linking}>
+        <NavigationContainer ref={navigationRef} theme={theme} linking={linking}>
             <Stack.Navigator screenOptions={{ headerShown: false }}>
                 {userToken == null ? (
                     <>
@@ -157,6 +188,7 @@ const AppNavigator = () => {
                         <Stack.Screen name="UserProfile" component={ProfileScreen} options={{ headerShown: false }} />
                         <Stack.Screen name="Chat" component={ChatScreen} options={{ headerShown: false }} />
                         <Stack.Screen name="NewMessage" component={NewMessageScreen} options={{ headerShown: false }} />
+                        <Stack.Screen name="Notifications" component={NotificationsScreen} options={{ headerShown: false }} />
                     </>
                 )}
             </Stack.Navigator>

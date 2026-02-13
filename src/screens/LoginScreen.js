@@ -1,5 +1,5 @@
 import React, { useContext, useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, StyleSheet, TouchableOpacity, Dimensions, Animated, Platform } from 'react-native';
+import { View, Text, TextInput, StyleSheet, TouchableOpacity, Dimensions, Animated, Platform, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import { AuthContext } from '../context/AuthContext';
@@ -11,6 +11,8 @@ const LoginScreen = () => {
     const navigation = useNavigation();
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
+    const [error, setError] = useState(null);
+    const [loading, setLoading] = useState(false);
     const { login } = useContext(AuthContext);
 
     // Use useRef to persist animated values across renders
@@ -101,13 +103,40 @@ const LoginScreen = () => {
 
     const handleLogin = async () => {
         if (!username || !password) {
-            alert('Please enter username and password');
+            setError('Proszę wpisać login i hasło');
             return;
         }
-        const result = await login(username, password);
-        if (!result.success) {
-            alert(result.error);
+
+        setLoading(true);
+        setError(null);
+
+        try {
+            const result = await login(username, password);
+            if (!result.success) {
+                // Map common errors to Polish
+                let errorMessage = result.error || 'Logowanie nie powiodło się';
+
+                if (errorMessage.includes('Invalid username') || errorMessage.includes('incorrect_password') || errorMessage.includes('invalid_username')) {
+                    errorMessage = 'Nieprawidłowy login lub hasło';
+                } else if (errorMessage.includes('empty_username') || errorMessage.includes('empty_password')) {
+                    errorMessage = 'Login i hasło są wymagane';
+                } else if (errorMessage.includes('Network Error')) {
+                    errorMessage = 'Błąd połączenia z serwerem';
+                }
+
+                setError(errorMessage);
+            }
+        } catch (err) {
+            setError('Wystąpił nieoczekiwany błąd');
+            console.error('Login error:', err);
+        } finally {
+            setLoading(false);
         }
+    };
+
+    const handleTextChange = (text, setter) => {
+        setter(text);
+        if (error) setError(null);
     };
 
     return (
@@ -162,27 +191,36 @@ const LoginScreen = () => {
             <View style={styles.overlay}>
                 <View style={styles.container}>
                     <Text style={styles.title}>Prawdziwa Miłość</Text>
+
                     <TextInput
-                        placeholder="Username"
+                        placeholder="Login lub Email"
                         value={username}
-                        onChangeText={setUsername}
+                        onChangeText={(text) => handleTextChange(text, setUsername)}
                         style={styles.input}
                         placeholderTextColor="#999"
+                        autoCapitalize="none"
                     />
                     <TextInput
-                        placeholder="Password"
+                        placeholder="Hasło"
                         value={password}
-                        onChangeText={setPassword}
+                        onChangeText={(text) => handleTextChange(text, setPassword)}
                         secureTextEntry
                         style={styles.input}
                         placeholderTextColor="#999"
                     />
+
+                    {error && (
+                        <View style={styles.errorContainer}>
+                            <Text style={styles.errorText}>{error}</Text>
+                        </View>
+                    )}
 
                     {/* Login Button */}
                     <TouchableOpacity
                         style={styles.buttonContainer}
                         onPress={handleLogin}
                         activeOpacity={0.8}
+                        disabled={loading}
                     >
                         <LinearGradient
                             colors={['#FF6B9D', '#C06C84']}
@@ -190,7 +228,11 @@ const LoginScreen = () => {
                             end={{ x: 1, y: 0 }}
                             style={styles.gradient}
                         >
-                            <Text style={styles.buttonText}>Zaloguj</Text>
+                            {loading ? (
+                                <ActivityIndicator color="#fff" />
+                            ) : (
+                                <Text style={styles.buttonText}>Zaloguj</Text>
+                            )}
                         </LinearGradient>
                     </TouchableOpacity>
 
@@ -312,6 +354,21 @@ const styles = StyleSheet.create({
         fontSize: 14,
         marginTop: 20,
         opacity: 0.8,
+    },
+    errorContainer: {
+        backgroundColor: 'rgba(255, 0, 0, 0.1)',
+        padding: 10,
+        borderRadius: 8,
+        marginTop: 10,
+        width: '100%',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(255, 0, 0, 0.3)',
+    },
+    errorText: {
+        color: '#ff4d4d',
+        fontSize: 14,
+        fontWeight: '600',
     },
 });
 

@@ -5,7 +5,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
@@ -15,7 +15,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.prawdziwamilosc.app",
-      "buildNumber": "5",
+      "buildNumber": "15",
       "infoPlist": {
         "NSCameraUsageDescription": "Aplikacja potrzebuje dostępu do aparatu, aby umożliwić Ci zrobienie zdjęcia do profilu.",
         "NSPhotoLibraryUsageDescription": "Aplikacja potrzebuje dostępu do galerii, aby umożliwić Ci wybór zdjęcia do profilu.",
@@ -57,6 +57,9 @@
       "eas": {
         "projectId": "e3933989-269c-46bc-a273-d6d477e458c3"
       }
-    }
+    },
+    "plugins": [
+      "@react-native-community/datetimepicker"
+    ]
   }
 }

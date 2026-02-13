@@ -143,3 +143,15 @@ export const deleteThread = async (threadId) => {
         throw error;
     }
 }
+
+export const markThreadAsRead = async (threadId) => {
+    try {
+        console.log(`Marking thread ${threadId} as read via custom API`);
+        const response = await client.post(`/sk/v1/thread/${threadId}/read`);
+        return response.data;
+    } catch (error) {
+        console.log(`Mark as read failed for /sk/v1/thread/${threadId}/read:`, error.response?.status);
+        // Silent fail as this is not critical for UI flow
+        return null;
+    }
+}

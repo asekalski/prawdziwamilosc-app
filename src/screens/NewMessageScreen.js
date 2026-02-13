@@ -14,6 +14,7 @@ const NewMessageScreen = ({ route, navigation }) => {
     const [sending, setSending] = useState(false);
     const [loading, setLoading] = useState(true);
     const [recipientAvatar, setRecipientAvatar] = useState(null);
+    const [recipientStatus, setRecipientStatus] = useState(null);
     const [existingThreadId, setExistingThreadId] = useState(null);
     const insets = useSafeAreaInsets();
     const flatListRef = useRef();
@@ -24,20 +25,30 @@ const NewMessageScreen = ({ route, navigation }) => {
             try {
                 // Get recipient avatar
                 const memberData = await getMember(recipientId);
-                if (memberData?.hires_avatar?.large || memberData?.hires_avatar?.full || memberData?.avatar_urls?.full) {
-                    setRecipientAvatar(memberData.hires_avatar?.large || memberData.hires_avatar?.full || memberData.avatar_urls.full);
+                if (memberData) {
+                    setRecipientAvatar(memberData.hires_avatar?.large || memberData.hires_avatar?.full || memberData.avatar_urls?.full || null);
+                    if (memberData.last_activity) {
+                        setRecipientStatus(memberData.last_activity);
+                    }
                 }
 
                 // Check for existing thread with this recipient
                 const threadsData = await getThreads(1, 50);
                 if (threadsData?.threads) {
                     for (const thread of threadsData.threads) {
-                        const recipientIds = Object.keys(thread.recipients || {}).map(id => parseInt(id));
-                        if (recipientIds.includes(parseInt(recipientId))) {
+                        // Better Messages uses 'participants' array of objects or IDs
+                        const participants = thread.participants || [];
+                        const participantIds = participants.map(p => {
+                            const pId = p.user_id || p;
+                            return parseInt(pId);
+                        });
+
+                        if (participantIds.includes(parseInt(recipientId))) {
                             // Found existing thread - load messages
-                            setExistingThreadId(thread.id);
+                            setExistingThreadId(thread.id || thread.thread_id);
+                            const tId = thread.id || thread.thread_id;
                             const threadMessages = (threadsData.messages || [])
-                                .filter(msg => msg.thread_id === thread.id)
+                                .filter(msg => msg.thread_id === tId)
                                 // Sort DESC (Newest first) for Inverted List
                                 .sort((a, b) => new Date(b.date_sent) - new Date(a.date_sent));
                             setMessages(threadMessages);
@@ -194,7 +205,7 @@ const NewMessageScreen = ({ route, navigation }) => {
                 <View style={styles.headerInfo}>
                     <Text style={styles.headerTitle}>{recipientName}</Text>
                     <Text style={styles.headerSubtitle}>
-                        {existingThreadId ? 'Konwersacja' : 'Nowa wiadomość'}
+                        {recipientStatus || (existingThreadId ? 'Konwersacja' : 'Nowa wiadomość')}
                     </Text>
                 </View>
             </View>

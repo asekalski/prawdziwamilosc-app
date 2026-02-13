@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useContext } from 'react';
 import { View, Text, FlatList, StyleSheet, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator, Image } from 'react-native';
-import { getThreads, sendMessage, sendReply } from '../api/messages';
+import { getThreads, sendMessage, sendReply, markThreadAsRead } from '../api/messages';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -8,10 +8,32 @@ import { AuthContext } from '../context/AuthContext';
 import client from '../api/client';
 
 const ChatScreen = ({ route }) => {
-    const { threadId, allMessages = [], users = {}, title } = route.params;
-    const { userInfo } = useContext(AuthContext);
+    // 0. Resolve users and participants
+    const { threadId, allMessages = [], users: initialUsers = {}, title, participantId, participantAvatar: initialAvatar } = route.params;
+    const { userInfo, refreshUnreadCount } = useContext(AuthContext);
     const navigation = useNavigation();
     const insets = useSafeAreaInsets();
+
+    const [users, setUsers] = useState(initialUsers);
+
+    // User info setup
+    const currentUserId = userInfo?.id;
+
+    // Improved participant resolution
+    const participant = participantId ? users[participantId] : Object.values(users).find(u => String(u.user_id || u.id) !== String(currentUserId));
+
+    // Helper to strip HTML and sanitize status
+    const sanitizeStatus = (status) => {
+        if (!status) return null;
+        if (typeof status === 'object') {
+            return status.rendered || status.raw || JSON.stringify(status);
+        }
+        return String(status).replace(/<[^>]*>?/gm, '').trim();
+    };
+
+    const participantName = title || participant?.name || 'Konwersacja';
+    const participantAvatar = participant?.avatar || initialAvatar || null;
+    const participantStatus = sanitizeStatus(participant?.last_activity) || 'Nieznana aktywność';
 
     // Single source of truth
     const [messages, setMessages] = useState([]);
@@ -52,16 +74,6 @@ const ChatScreen = ({ route }) => {
         return new Date(); // Fallback
     };
 
-    // User info setup
-    const currentUser = Object.values(users).find(u =>
-        u.name?.toLowerCase() === userInfo?.nicename?.toLowerCase() ||
-        u.name?.toLowerCase() === userInfo?.displayName?.toLowerCase()
-    );
-    const currentUserId = currentUser?.user_id || currentUser?.id;
-    const participant = Object.values(users).find(u => String(u.user_id) !== String(currentUserId));
-    const participantName = title || participant?.name || 'Konwersacja';
-    const participantAvatar = participant?.avatar || null;
-
     // 1. Initial Load
     useEffect(() => {
         let threadMessages = allMessages.filter(msg =>
@@ -71,13 +83,54 @@ const ChatScreen = ({ route }) => {
         threadMessages.sort((a, b) => parseDate(b) - parseDate(a));
         setMessages(threadMessages);
         setLoading(false);
-    }, [threadId]);
+
+        // Mark as read on enter
+        markThreadAsRead(threadId).then(() => {
+            refreshUnreadCount();
+        });
+
+        // Fetch full participant details for activity status & up-to-date info
+        const fetchParticipantDetails = async () => {
+            const targetId = participantId || participant?.user_id || participant?.id;
+            if (!targetId) return;
+
+            try {
+                const { getMember } = await import('../api/members');
+                const pData = await getMember(targetId);
+                if (pData) {
+                    setUsers(prev => ({
+                        ...prev,
+                        [targetId]: {
+                            ...prev[targetId],
+                            ...pData,
+                            user_id: targetId // Ensure consistent ID field
+                        }
+                    }));
+                }
+            } catch (error) {
+                console.log('Error fetching participant details in Chat:', error);
+            }
+        };
+        fetchParticipantDetails();
+    }, [threadId, participantId]);
 
     // 2. Polling with SIMPLE Merge Logic
     useEffect(() => {
         const fetchFreshMessages = async () => {
             try {
                 const threadsData = await getThreads(1, 50);
+
+                // Update users map if provided in background
+                if (threadsData?.users && Array.isArray(threadsData.users)) {
+                    setUsers(prev => {
+                        const next = { ...prev };
+                        threadsData.users.forEach(u => {
+                            next[u.user_id || u.id] = u;
+                        });
+                        return next;
+                    });
+                }
+
                 let incomingMessages = [];
                 if (threadsData?.messages && Array.isArray(threadsData.messages)) {
                     incomingMessages = threadsData.messages.filter(msg =>
@@ -86,6 +139,12 @@ const ChatScreen = ({ route }) => {
                 }
 
                 if (incomingMessages.length === 0) return;
+
+                // If we got new messages, mark thread as read
+                // Mark as read after sync
+                markThreadAsRead(threadId).then(() => {
+                    refreshUnreadCount();
+                });
 
                 setMessages(currentMessages => {
                     // Create a map of incoming messages by ID for fast lookup
@@ -300,11 +359,17 @@ const ChatScreen = ({ route }) => {
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
                     <Ionicons name="arrow-back" size={24} color="#fff" />
                 </TouchableOpacity>
-                {participantAvatar && <Image source={{ uri: participantAvatar }} style={styles.headerAvatar} />}
-                <View style={styles.headerInfo}>
-                    <Text style={styles.headerTitle}>{participantName}</Text>
-                    <Text style={styles.headerSubtitle}>Online</Text>
-                </View>
+                <TouchableOpacity
+                    style={styles.headerProfileContainer}
+                    onPress={() => participantId && navigation.navigate('UserProfile', { userId: participantId })}
+                    activeOpacity={0.7}
+                >
+                    {!!participantAvatar && <Image source={{ uri: participantAvatar }} style={styles.headerAvatar} />}
+                    <View style={styles.headerInfo}>
+                        <Text style={styles.headerTitle}>{participantName}</Text>
+                        <Text style={styles.headerSubtitle}>{participantStatus}</Text>
+                    </View>
+                </TouchableOpacity>
             </View>
 
             <FlatList
@@ -323,7 +388,6 @@ const ChatScreen = ({ route }) => {
                     </View>
                 }
             />
-
             <View style={[styles.inputContainer, { paddingBottom: insets.bottom + 10 }]}>
                 <TextInput
                     style={styles.input}
@@ -350,6 +414,7 @@ const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#1C1C1E' },
     header: { flexDirection: 'row', alignItems: 'center', padding: 15, backgroundColor: '#2C2C2E', borderBottomWidth: 1, borderBottomColor: '#3A3A3C' },
     backButton: { marginRight: 12, padding: 4 },
+    headerProfileContainer: { flex: 1, flexDirection: 'row', alignItems: 'center' },
     headerAvatar: { width: 40, height: 40, borderRadius: 20, marginRight: 12 },
     headerInfo: { flex: 1 },
     headerTitle: { fontSize: 17, fontWeight: '600', color: '#fff' },

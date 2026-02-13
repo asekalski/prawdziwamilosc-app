@@ -1,16 +1,17 @@
 import React, { useState, useEffect, useContext, useRef } from 'react';
-import { View, Text, FlatList, StyleSheet, TextInput, ActivityIndicator, Image, TouchableOpacity, Dimensions, Alert, SafeAreaView, ScrollView, Modal, Animated, PanResponder } from 'react-native';
+import { View, Text, FlatList, StyleSheet, TextInput, ActivityIndicator, Image, TouchableOpacity, Dimensions, Alert, SafeAreaView, ScrollView, Modal, Animated, PanResponder, RefreshControl } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getMembers, getXProfileGroups, getMember, toggleLike, getLikedUsers, getLikesMeUsers, getMatches } from '../api/members';
 import { addSkippedUser, getSkippedUsers, removeSkippedUser, getSkippedUserIds } from '../api/skipped';
 import { getSuperMessageStatus } from '../api/superMessages';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useNavigation, useFocusEffect, useScrollToTop } from '@react-navigation/native';
 import { useTheme } from '@react-navigation/native';
 import { Ionicons, FontAwesome5, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AuthContext } from '../context/AuthContext';
 import SuperMessageModal from '../components/SuperMessageModal';
 import HeartLoader from '../components/HeartLoader';
+import { getMe } from '../api/members';
 
 // Helpers
 const stripHtml = (str) => {
@@ -86,7 +87,8 @@ const mapUserProfile = (user) => {
         work: stripHtml(getVal(356, 'styl pracy', 'praca')),
         diet: stripHtml(getVal(362, 'styl jedzenia', 'dieta')),
         zodiac_sign: stripHtml(getVal(303, 'znak zodiaku', 'zodiak')),
-        age: user.age || calculateAge(getVal(107, 'data urodzenia', 'wiek', 'birthdate'))
+        age: user.age || calculateAge(getVal(107, 'data urodzenia', 'wiek', 'birthdate')),
+        gender: getVal(129, 'płeć', 'gender')
     };
 };
 
@@ -119,13 +121,14 @@ const FILTER_OPTIONS = [
 ];
 
 const FILTER_VALUES = {
-    faith: ['Wierzący', 'Niewierzący'],
+    faith: ['Wierzący', 'Ateista', 'Duchowy', 'Inne'],
     politics: ['Konserwatywne', 'Liberalne', 'Centrowe', 'Apolityczny'],
-    work: ['Stabilna', 'Przedsiębiorca', 'Freelancerka', 'Korpo', 'Start-up', 'Artysta (praca kreatywna)', 'Twórca Internetowy', 'Właściciel', 'Naukowa'],
-    diet: ['Vege', 'Mięso', 'Inna']
+    work: ['Korporacja', 'Własny Biznes', 'Normalna Praca', 'Praca Kreatywna', 'Nie pracuję'],
+    diet: ['Wszystkożerca', 'Wegetarianin', 'Weganin', 'Keto/Inne']
 };
 
 const MembersScreen = ({ route }) => {
+    const { userInfo } = useContext(AuthContext);
     const [members, setMembers] = useState([]);
     const [loading, setLoading] = useState(false);
     const [page, setPage] = useState(1);
@@ -135,6 +138,49 @@ const MembersScreen = ({ route }) => {
     const [likedUsers, setLikedUsers] = useState({}); // Track liked users { userId: true/false }
     const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'search'); // Tab navigation state
     const [hasMore, setHasMore] = useState(true); // Track if there are more results to load
+    const [refreshing, setRefreshing] = useState(false);
+
+    const [showOnboardingBubble, setShowOnboardingBubble] = useState(false);
+    const [bubbleAnim] = useState(new Animated.Value(0));
+
+    useEffect(() => {
+        const checkBubble = async () => {
+            const shown = await AsyncStorage.getItem('allowChatBubbleShown');
+            if (!shown && userInfo?.gender === 'Kobieta') {
+                setShowOnboardingBubble(true);
+                Animated.spring(bubbleAnim, {
+                    toValue: 1,
+                    useNativeDriver: true,
+                    tension: 50,
+                    friction: 7
+                }).start();
+            }
+        };
+        checkBubble();
+    }, [userInfo]);
+
+    const handleCloseBubble = async () => {
+        await AsyncStorage.setItem('allowChatBubbleShown', 'true');
+        Animated.timing(bubbleAnim, {
+            toValue: 0,
+            duration: 300,
+            useNativeDriver: true
+        }).start(() => setShowOnboardingBubble(false));
+    };
+
+    const handleAllowChat = async (targetUser) => {
+        try {
+            const { sendMessage } = require('../api/messages');
+            await sendMessage(targetUser.id, 'Prawdziwa Miłość', 'Użytkowniczka pozwala Ci ze sobą porozmawiać.');
+            Alert.alert('Sukces', `Pozwoliłaś użytkownikowi ${targetUser.name} na rozmowę.`);
+            if (showOnboardingBubble) {
+                handleCloseBubble();
+            }
+        } catch (error) {
+            console.log('Error allowing chat:', error);
+            Alert.alert('Błąd', 'Nie udało się wysłać powiadomienia.');
+        }
+    };
 
     // Update active tab when params change or screen is focused
     useFocusEffect(
@@ -142,6 +188,19 @@ const MembersScreen = ({ route }) => {
             if (route?.params?.initialTab) {
                 setActiveTab(route.params.initialTab);
             }
+
+            // Fetch unread notification count
+            const fetchUnreadCount = async () => {
+                try {
+                    const data = await getMe();
+                    if (data && typeof data.unread_notifications_count !== 'undefined') {
+                        setUnreadNotifications(data.unread_notifications_count);
+                    }
+                } catch (error) {
+                    console.log('Error fetching unread count:', error);
+                }
+            };
+            fetchUnreadCount();
         }, [route?.params?.initialTab])
     );
 
@@ -163,6 +222,7 @@ const MembersScreen = ({ route }) => {
     const [showSuperMessageModal, setShowSuperMessageModal] = useState(false);
     const [superMessageRecipient, setSuperMessageRecipient] = useState(null);
     const [isPremium, setIsPremium] = useState(false);
+    const [unreadNotifications, setUnreadNotifications] = useState(0);
 
     // Card swipe animations - store animation values per card
     const cardAnimations = useRef({}).current;
@@ -173,8 +233,14 @@ const MembersScreen = ({ route }) => {
             try {
                 const status = await getSuperMessageStatus();
                 setIsPremium(status?.is_premium ?? false);
+
+                // Initial count fetch
+                const me = await getMe();
+                if (me && typeof me.unread_notifications_count !== 'undefined') {
+                    setUnreadNotifications(me.unread_notifications_count);
+                }
             } catch (error) {
-                console.log('Could not check premium status');
+                console.log('Could not check premium status or unread count');
             }
         };
         checkPremiumStatus();
@@ -278,8 +344,10 @@ const MembersScreen = ({ route }) => {
     const matchScaleAnim = useRef(new Animated.Value(0)).current;
     const heartPulseAnim = useRef(new Animated.Value(1)).current;
     const navigation = useNavigation();
+    const listRef = useRef(null);
+    useScrollToTop(listRef);
+
     const insets = useSafeAreaInsets();
-    const { userInfo } = useContext(AuthContext);
 
     // Fetch current user avatar
     useEffect(() => {
@@ -371,6 +439,14 @@ const MembersScreen = ({ route }) => {
         } finally {
             setLoading(false);
         }
+    };
+
+    const handleRefresh = async () => {
+        setRefreshing(true);
+        setPage(1);
+        setHasMore(true);
+        await fetchTabData(activeTab, search);
+        setRefreshing(false);
     };
 
     const fetchTabData = async (tabId, searchQuery = '') => {
@@ -764,9 +840,9 @@ const MembersScreen = ({ route }) => {
                                     <Text style={[styles.profileTagText, styles.smallProfileTagText]}>{item.faith || faithField}</Text>
                                 </View>
                             ) : null}
-                            {(item.politics) ? (
+                            {(item.politics || politicsField) ? (
                                 <View style={[styles.profileTag, styles.smallProfileTag]}>
-                                    <Text style={[styles.profileTagText, styles.smallProfileTagText]}>{item.politics}</Text>
+                                    <Text style={[styles.profileTagText, styles.smallProfileTagText]}>{item.politics || politicsField}</Text>
                                 </View>
                             ) : null}
                             {(item.work || workField) ? (
@@ -828,6 +904,18 @@ const MembersScreen = ({ route }) => {
                             >
                                 <Ionicons name="mail" size={22} color="#FFD700" />
                             </TouchableOpacity>
+
+                            {/* Allow Chat for Women (Horizontal) */}
+                            {userInfo?.gender?.toLowerCase() === 'kobieta' && item.gender?.toLowerCase() === 'mężczyzna' && (
+                                <TouchableOpacity
+                                    style={[styles.horizontalButton, styles.allowChatButtonHorizontal]}
+                                    onPress={() => handleAllowChat(item)}
+                                >
+                                    <View style={styles.allowChatIconContainerHorizontal}>
+                                        <Ionicons name="checkmark" size={20} color="#808000" />
+                                    </View>
+                                </TouchableOpacity>
+                            )}
                         </View>
                     </View>
                 </Animated.View>
@@ -850,51 +938,94 @@ const MembersScreen = ({ route }) => {
                 >
                     <Image source={{ uri: imageUrl }} style={styles.cardImage} resizeMode="cover" />
 
-                    {/* Name and status overlay at bottom of image */}
+                    {/* Minimal Overlay for Essential Info */}
                     <View style={styles.cardOverlay}>
                         <View style={styles.nameRow}>
                             <Text style={styles.cardName}>{item.name}{age ? `, ${age}` : ''}</Text>
                         </View>
-                        {item.bio ? (
-                            <Text style={styles.cardBio} numberOfLines={2} ellipsizeMode="tail">
-                                {item.bio}
-                            </Text>
-                        ) : null}
                         <View style={styles.statusContainer}>
                             <View style={styles.statusDot} />
                             <Text style={styles.statusText}>{item.last_activity || 'Nieznana aktywność'}</Text>
                         </View>
-
-                        {/* Profile Tags */}
-                        <View style={styles.profileTagsContainer}>
-                            {item.faith && (
-                                <View style={styles.profileTag}>
-                                    <Text style={styles.profileTagText}>{item.faith}</Text>
-                                </View>
-                            )}
-                            {item.work && (
-                                <View style={styles.profileTag}>
-                                    <Text style={styles.profileTagText}>{item.work}</Text>
-                                </View>
-                            )}
-                            {item.diet && (
-                                <View style={styles.profileTag}>
-                                    <Text style={styles.profileTagText}>{item.diet}</Text>
-                                </View>
-                            )}
-                            {showNumerology && item.numerology && (
-                                <View style={[styles.profileTag, styles.numerologyTag]}>
-                                    <Text style={[styles.profileTagText, styles.numerologyTagText]}>{item.numerology}</Text>
-                                </View>
-                            )}
-                            {zodiac ? (
-                                <View style={[styles.profileTag, styles.zodiacTag]}>
-                                    <Text style={styles.profileTagText}>{zodiac}</Text>
-                                </View>
-                            ) : null}
-                        </View>
                     </View>
+
+                    {/* Allow Chat Button for Women - Positioned in Top Right Corner */}
+                    {userInfo?.gender?.toLowerCase() === 'kobieta' && item.gender?.toLowerCase() === 'mężczyzna' && (
+                        <View style={styles.allowChatOverlay}>
+                            <TouchableOpacity
+                                style={styles.allowChatButtonTopRight}
+                                onPress={() => handleAllowChat(item)}
+                                activeOpacity={0.7}
+                            >
+                                <Ionicons name="checkmark" size={28} color="#808000" />
+                            </TouchableOpacity>
+
+                            {showOnboardingBubble && (
+                                <Animated.View style={[
+                                    styles.onboardingBubble,
+                                    {
+                                        opacity: bubbleAnim,
+                                        transform: [{
+                                            translateY: bubbleAnim.interpolate({
+                                                inputRange: [0, 1],
+                                                outputRange: [20, 0]
+                                            })
+                                        }]
+                                    }
+                                ]}>
+                                    <Text style={styles.onboardingBubbleText}>Pozwól temu użytkownikowi ze sobą porozmawiać.</Text>
+                                    <TouchableOpacity onPress={handleCloseBubble} style={styles.onboardingBubbleClose}>
+                                        <Ionicons name="close" size={16} color="#fff" />
+                                    </TouchableOpacity>
+                                    <View style={styles.onboardingBubbleArrow} />
+                                </Animated.View>
+                            )}
+                        </View>
+                    )}
                 </TouchableOpacity>
+
+                {/* Profile Details Below Image */}
+                <View style={styles.cardDetailsContainer}>
+                    {item.bio ? (
+                        <Text style={styles.cardBio} numberOfLines={3} ellipsizeMode="tail">
+                            {item.bio}
+                        </Text>
+                    ) : null}
+
+                    {/* Profile Tags */}
+                    <View style={styles.profileTagsContainer}>
+                        {zodiac ? (
+                            <View style={[styles.profileTag, styles.zodiacTag]}>
+                                <Text style={styles.profileTagText}>{zodiac}</Text>
+                            </View>
+                        ) : null}
+                        {(item.faith || faithField) && (
+                            <View style={styles.profileTag}>
+                                <Text style={styles.profileTagText}>{item.faith || faithField}</Text>
+                            </View>
+                        )}
+                        {(item.politics || politicsField) && (
+                            <View style={styles.profileTag}>
+                                <Text style={styles.profileTagText}>{item.politics || politicsField}</Text>
+                            </View>
+                        )}
+                        {(item.work || workField) && (
+                            <View style={styles.profileTag}>
+                                <Text style={styles.profileTagText}>{item.work || workField}</Text>
+                            </View>
+                        )}
+                        {(item.diet || dietField) && (
+                            <View style={styles.profileTag}>
+                                <Text style={styles.profileTagText}>{item.diet || dietField}</Text>
+                            </View>
+                        )}
+                        {showNumerology && item.numerology && (
+                            <View style={[styles.profileTag, styles.numerologyTag]}>
+                                <Text style={[styles.profileTagText, styles.numerologyTagText]}>{item.numerology}</Text>
+                            </View>
+                        )}
+                    </View>
+                </View>
 
                 <View style={styles.actionButtonsContainer}>
                     <TouchableOpacity style={[styles.actionButton, { backgroundColor: '#fff' }]}>
@@ -929,7 +1060,7 @@ const MembersScreen = ({ route }) => {
                     </TouchableOpacity>
                 </View>
             </Animated.View>
-        )
+        );
     };
 
     const handleResetFilters = async () => {
@@ -998,9 +1129,9 @@ const MembersScreen = ({ route }) => {
                     <Ionicons name="options-outline" size={24} color="#FFFFFF" />
                 </TouchableOpacity>
                 <View style={{ flex: 1 }} />
-                <TouchableOpacity style={styles.headerButton}>
+                <TouchableOpacity style={styles.headerButton} onPress={() => navigation.navigate('Notifications')}>
                     <Ionicons name="notifications-outline" size={24} color="#FFFFFF" />
-                    <View style={styles.notificationDot} />
+                    {unreadNotifications > 0 && <View style={styles.notificationDot} />}
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => navigation.navigate('UserProfile', { userId: 'me' })}>
                     <View style={styles.avatarContainer}>
@@ -1088,6 +1219,7 @@ const MembersScreen = ({ route }) => {
             {/* Content Area with Loader Overlay */}
             <View style={{ flex: 1, position: 'relative' }}>
                 <FlatList
+                    ref={listRef}
                     data={members}
                     renderItem={renderItem}
                     keyExtractor={item => item.id.toString()}
@@ -1096,6 +1228,14 @@ const MembersScreen = ({ route }) => {
                     ListFooterComponent={loading && members.length > 0 ? <ActivityIndicator size="small" color="#FF6B6B" style={{ marginVertical: 20 }} /> : null}
                     contentContainerStyle={styles.listContent}
                     showsVerticalScrollIndicator={false}
+                    refreshControl={
+                        <RefreshControl
+                            refreshing={refreshing}
+                            onRefresh={handleRefresh}
+                            tintColor="#FF6B6B"
+                            colors={["#FF6B6B"]}
+                        />
+                    }
                 />
 
                 {/* Centered Heart Loading Animation */}
@@ -1312,6 +1452,7 @@ const MembersScreen = ({ route }) => {
                             </View>
                         ))}
 
+                        {/* 
                         {FILTER_OPTIONS.map((filter) => (
                             <TouchableOpacity key={filter.id} style={styles.filterRow}>
                                 <Text style={styles.filterIcon}>{filter.icon}</Text>
@@ -1319,6 +1460,7 @@ const MembersScreen = ({ route }) => {
                                 <Text style={styles.filterValue}>Wybierz ›</Text>
                             </TouchableOpacity>
                         ))}
+                        */}
 
                         {/* Reset Filters Button */}
                         <TouchableOpacity
@@ -1473,20 +1615,34 @@ const styles = StyleSheet.create({
         width: CARD_WIDTH,
         alignSelf: 'center',
         marginBottom: 30,
+        backgroundColor: '#1C1C1E',
+        borderRadius: 30,
+        overflow: 'hidden',
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.05)',
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.3,
+        shadowRadius: 15,
+        elevation: 8,
     },
     cardHeader: { marginBottom: 10 },
     nameRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 },
     cardName: {
         fontFamily: 'serif',
-        fontSize: 32,
+        fontSize: 28,
         fontWeight: 'bold',
-        color: '#FFFFFF', // White text for dark background
+        color: '#FFFFFF',
         flex: 1,
+        textShadowColor: 'rgba(0, 0, 0, 0.5)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 3,
     },
     imageContainer: {
         position: 'relative',
         borderRadius: 30,
         overflow: 'hidden',
+        backgroundColor: '#000',
     },
     cardOverlay: {
         position: 'absolute',
@@ -1494,9 +1650,8 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
         paddingHorizontal: 20,
-        paddingVertical: 20,
-        paddingBottom: 55,
-        backgroundColor: 'rgba(0, 0, 0, 0.4)',
+        paddingVertical: 15,
+        backgroundColor: 'rgba(0, 0, 0, 0.35)',
     },
     cardOverlayCompact: {
         paddingHorizontal: 10,
@@ -1505,6 +1660,10 @@ const styles = StyleSheet.create({
     },
     cardNameCompact: {
         fontSize: 16,
+    },
+    cardDetailsContainer: {
+        padding: 20,
+        paddingBottom: 10,
     },
     zodiacBadge: {
         position: 'absolute',
@@ -1555,7 +1714,7 @@ const styles = StyleSheet.create({
     profileTagsContainer: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        marginTop: 5,
+        marginTop: 10,
         justifyContent: 'flex-start',
         alignItems: 'center',
     },
@@ -1604,17 +1763,18 @@ const styles = StyleSheet.create({
     statusText: { color: '#2ECC71', fontWeight: '600' },
     cardImage: {
         width: '100%',
-        height: IMAGE_HEIGHT,
+        height: IMAGE_HEIGHT * 0.95, // Slightly shorter to make room for details
         borderRadius: 30,
-        backgroundColor: '#ddd',
+        backgroundColor: '#000',
     },
 
     zodiacText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
     actionButtonsContainer: {
         flexDirection: 'row',
         justifyContent: 'space-evenly',
-        marginTop: -20, // Overlap the image slightly or just below
         paddingHorizontal: 20,
+        paddingBottom: 25,
+        paddingTop: 10,
     },
     actionButton: {
         width: 60,
@@ -2021,12 +2181,110 @@ const styles = StyleSheet.create({
         fontSize: 14,
     },
     cardBio: {
+        fontSize: 14,
+        color: '#CBCBCB',
+        marginBottom: 10,
+        lineHeight: 20,
+    },
+    allowChatButton: {
+        backgroundColor: '#2ECC71',
+        marginLeft: 10,
+    },
+    allowChatOverlay: {
+        position: 'absolute',
+        top: 10,
+        right: 10,
+        zIndex: 100,
+    },
+    allowChatButtonTopRight: {
+        backgroundColor: '#1A1A1A',
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 1.5,
+        borderColor: '#D4AF37',
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
+        elevation: 6,
+    },
+    allowChatIconContainer: {
+        position: 'relative',
+        width: 30,
+        height: 30,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    allowChatCheckmark: {
+        position: 'absolute',
+        bottom: -2,
+        right: -2,
+        backgroundColor: '#fff',
+        borderRadius: 6,
+        padding: 1,
+    },
+    onboardingBubble: {
+        position: 'absolute',
+        top: 55,
+        right: 0,
+        backgroundColor: '#FF6B9D',
+        padding: 12,
+        borderRadius: 12,
+        width: 180,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 5,
+        elevation: 10,
+        zIndex: 1000,
+    },
+    onboardingBubbleText: {
+        color: '#fff',
         fontSize: 13,
-        color: '#E0E0E0',
-        marginBottom: 6,
-        textShadowColor: 'rgba(0, 0, 0, 0.75)',
-        textShadowOffset: { width: -1, height: 1 },
-        textShadowRadius: 4,
+        fontWeight: '600',
+        lineHeight: 18,
+    },
+    onboardingBubbleClose: {
+        position: 'absolute',
+        top: 4,
+        right: 4,
+    },
+    onboardingBubbleArrow: {
+        bottom: '100%',
+        right: 10,
+        width: 0,
+        height: 0,
+        backgroundColor: 'transparent',
+        borderStyle: 'solid',
+        borderLeftWidth: 10,
+        borderRightWidth: 10,
+        borderBottomWidth: 10,
+        borderLeftColor: 'transparent',
+        borderRightColor: 'transparent',
+        borderBottomColor: '#FF6B9D',
+    },
+    allowChatButtonHorizontal: {
+        backgroundColor: '#1A1A1A',
+        borderWidth: 1,
+        borderColor: '#D4AF37',
+    },
+    allowChatIconContainerHorizontal: {
+        position: 'relative',
+        width: 24,
+        height: 24,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    allowChatCheckmarkHorizontal: {
+        position: 'absolute',
+        bottom: -2,
+        right: -2,
+        backgroundColor: '#fff',
+        borderRadius: 5,
+        padding: 0.5,
     },
 });
 

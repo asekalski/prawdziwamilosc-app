@@ -21,6 +21,10 @@
         }
     },
     "submit": {
-        "production": {}
+        "production": {
+            "ios": {
+                "appleId": "asekalski@gmail.com"
+            }
+        }
     }
 }

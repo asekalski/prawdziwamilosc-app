@@ -15,6 +15,8 @@ const ActivityPost = ({ activity, onDelete, onLike }) => {
     const { userInfo } = useContext(AuthContext);
     const navigation = useNavigation();
     const isOwnPost = userInfo && activity.user_id === userInfo.id;
+    const isAdmin = userInfo && userInfo.roles && userInfo.roles.includes('administrator');
+    const isAdminOrOwner = isOwnPost || isAdmin;
 
     const handleDelete = () => {
         Alert.alert(
@@ -106,7 +108,7 @@ const ActivityPost = ({ activity, onDelete, onLike }) => {
                         <Text style={styles.date}>· {formatDate(activity.date)}</Text>
                     </TouchableOpacity>
 
-                    {isOwnPost && (
+                    {isAdminOrOwner && (
                         <TouchableOpacity onPress={handleDelete} style={styles.deleteButton}>
                             <Ionicons name="trash-outline" size={16} color="#666" />
                         </TouchableOpacity>

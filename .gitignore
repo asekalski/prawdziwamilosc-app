@@ -39,3 +39,9 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+credentials.json
+
+# Build artifacts
+PrawdziwaMio.app/
+
+simulator_build.tar.gz

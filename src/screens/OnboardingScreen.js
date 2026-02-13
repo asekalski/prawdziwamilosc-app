@@ -53,10 +53,10 @@ const OnboardingScreen = () => {
 
     const fieldOptions = {
         kogo_szukam: ['Kobiety', 'Mężczyzny', 'Wszystkich'],
-        religia: ['Wierzący', 'Ateista', 'Duchowy, ale nie religijny', 'Inne'],
+        religia: ['Wierzący', 'Ateista', 'Duchowy', 'Inne'],
         polityka: ['Konserwatywne', 'Liberalne', 'Centrowe', 'Apolityczny'],
         praca: ['Korporacja', 'Własny Biznes', 'Normalna Praca', 'Praca Kreatywna', 'Nie pracuję'],
-        dieta: ['Wszystkożerca', 'Wegetarianin', 'Weganin', 'Keto / Specjalistyczna'],
+        dieta: ['Wszystkożerca', 'Wegetarianin', 'Weganin', 'Keto/Inne'],
     };
 
     const steps = [

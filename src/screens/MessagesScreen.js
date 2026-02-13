@@ -16,7 +16,7 @@ const MessagesScreen = () => {
     const [loading, setLoading] = useState(false);
     const navigation = useNavigation();
     const insets = useSafeAreaInsets();
-    const { userInfo } = useContext(AuthContext);
+    const { userInfo, refreshUnreadCount } = useContext(AuthContext);
 
     // Keep track of open swipeables to close them when another opens
     const swipeableRefs = useRef(new Map());
@@ -45,9 +45,30 @@ const MessagesScreen = () => {
                 usersMap[user.user_id] = user;
             });
 
-            setThreads(threadsArray);
+            // De-duplicate threads by recipient (for private 1-on-1 chats)
+            const uniqueThreads = [];
+            const seenRecipients = new Set();
+
+            threadsArray.forEach(thread => {
+                const participants = thread.participants || [];
+                const otherParticipants = participants
+                    .map(p => p.user_id || p)
+                    .filter(id => userInfo?.id && id != userInfo.id);
+
+                if (otherParticipants.length === 1 && otherParticipants[0]) {
+                    const recipientId = otherParticipants[0].toString();
+                    if (seenRecipients.has(recipientId)) {
+                        return; // Skip duplicate thread for same recipient
+                    }
+                    seenRecipients.add(recipientId);
+                }
+                uniqueThreads.push(thread);
+            });
+
+            setThreads(uniqueThreads);
             setAllMessages(messagesArray);
             setUsers(usersMap);
+            refreshUnreadCount(uniqueThreads);
         } catch (error) {
             console.error(error);
             alert(`Failed to load messages: ${error.message}`);
@@ -125,6 +146,7 @@ const MessagesScreen = () => {
 
         // Get participant names (excluding current user) and their avatar
         let participantAvatar = null;
+        let participantId = null;
         const participantNames = thread.participants
             ? thread.participants
                 .map(p => {
@@ -132,6 +154,7 @@ const MessagesScreen = () => {
                     // Try to match loosely (string vs number)
                     if (userInfo?.id && userId == userInfo.id) return null;
 
+                    participantId = userId;
                     const user = users[userId];
                     // Get avatar from first non-current-user participant
                     if (user && !participantAvatar) {
@@ -168,7 +191,9 @@ const MessagesScreen = () => {
                         threadId: thread.thread_id,
                         allMessages: allMessages,
                         users: users,
-                        title: threadTitle // Pass resolved title
+                        title: threadTitle, // Pass resolved title
+                        participantId: participantId,
+                        participantAvatar: participantAvatar
                     })}
                     activeOpacity={0.7}
                 >
@@ -219,7 +244,7 @@ const MessagesScreen = () => {
                         thread.participants.forEach(p => {
                             const userId = p.user_id || p;
                             // Exclude current user
-                            if (userInfo?.id && userId != userInfo.id) {
+                            if (userInfo?.id && userId && userId != userInfo.id) {
                                 usersWithThreads.add(userId.toString());
                             }
                         });
@@ -228,7 +253,7 @@ const MessagesScreen = () => {
 
                 // Filter matches to only show those WITHOUT threads
                 const newMatches = matches.filter(match =>
-                    !usersWithThreads.has(match.id.toString())
+                    match.id && !usersWithThreads.has(match.id.toString())
                 );
 
                 return newMatches.length > 0 && (
