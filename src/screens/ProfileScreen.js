@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useContext } from 'react';
-import { View, Text, StyleSheet, Image, ActivityIndicator, ScrollView, Alert, TextInput, Modal, FlatList, Pressable, Linking, Dimensions, TouchableOpacity } from 'react-native';
+
+import React, { useState, useEffect, useContext, useRef } from 'react';
+import { View, Text, StyleSheet, Image, ActivityIndicator, ScrollView, Alert, TextInput, Modal, FlatList, Pressable, Linking, Dimensions, TouchableOpacity, Switch } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { getMember, updateXProfileField, updateMemberName, deleteAccount, getXProfileGroups, updateOnboarding } from '../api/members';
+import { getMember, updateXProfileField, updateMemberName, deleteAccount, getXProfileGroups, updateOnboarding, updatePreference } from '../api/members';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { addSkippedUser } from '../api/skipped';
-import { getThreads } from '../api/messages';
+import { getThreads, allowChat } from '../api/messages';
 import { getSuperMessageStatus } from '../api/superMessages';
 import { AuthContext } from '../context/AuthContext';
 import { useTheme, useNavigation } from '@react-navigation/native';
@@ -14,13 +15,14 @@ import SuperMessageModal from '../components/SuperMessageModal';
 import HeartLoader from '../components/HeartLoader';
 
 const ProfileScreen = ({ route }) => {
-    const { userInfo, logout, updateUserInfo } = useContext(AuthContext);
+    const { userInfo, logout, updateUserInfo, userToken, deleteAccount } = useContext(AuthContext);
     const [member, setMember] = useState(null);
     const [loading, setLoading] = useState(true);
     const [messageLoading, setMessageLoading] = useState(false);
     const [deletingAccount, setDeletingAccount] = useState(false);
     const [editingFieldId, setEditingFieldId] = useState(null);
     const [editingValue, setEditingValue] = useState('');
+    const editingValueRef = useRef('');
     const [savingFieldId, setSavingFieldId] = useState(null);
     const [showSelectModal, setShowSelectModal] = useState(false);
     const [selectOptions, setSelectOptions] = useState([]);
@@ -29,15 +31,17 @@ const ProfileScreen = ({ route }) => {
     const [isPremium, setIsPremium] = useState(false);
     const [showSuperMessageModal, setShowSuperMessageModal] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
-    const [showGalleryPicker, setShowGalleryPicker] = useState(false);
     const [isSwappingAvatar, setIsSwappingAvatar] = useState(false);
+    const [showGalleryPicker, setShowGalleryPicker] = useState(false);
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [selectedDate, setSelectedDate] = useState(new Date());
     const [dateFieldId, setDateFieldId] = useState(null);
+    const [updatingPreference, setUpdatingPreference] = useState(false);
     const { colors } = useTheme();
 
     const userId = route?.params?.userId || userInfo?.id || 'me';
     const isOwnProfile = userId === 'me' || String(userId) === String(userInfo?.id);
+    const isAdmin = userInfo?.roles?.includes('administrator') || userInfo?.roles?.includes('editor');
 
     useEffect(() => {
         const checkPremiumStatus = async () => {
@@ -74,9 +78,15 @@ const ProfileScreen = ({ route }) => {
 
     // Data extractor for badges/pills
     const getBadgeVal = (fieldId) => {
-        if (member?.[fieldId === 346 ? 'faith' : fieldId === 351 ? 'politics' : fieldId === 356 ? 'work' : fieldId === 362 ? 'diet' : 'zodiac_sign']) {
-            return member[fieldId === 346 ? 'faith' : fieldId === 351 ? 'politics' : fieldId === 356 ? 'work' : fieldId === 362 ? 'diet' : 'zodiac_sign'];
-        }
+        const idToKey = {
+            346: 'faith', 133: 'faith',
+            351: 'politics', 215: 'politics',
+            356: 'work', 108: 'work',
+            362: 'diet', 334: 'diet',
+            303: 'zodiac_sign'
+        };
+        const key = idToKey[fieldId];
+        if (key && member?.[key]) return member[key];
         if (!member?.xprofile?.groups) return null;
         for (const group of member.xprofile.groups) {
             for (const field of group.fields || []) {
@@ -102,6 +112,31 @@ const ProfileScreen = ({ route }) => {
 
         // Handle date fields specially
         if (fieldType === 'datebox') {
+            const isBirthDate = field.name?.toLowerCase().includes('urodzenia') ||
+                field.name?.toLowerCase().includes('birth') ||
+                field.name?.toLowerCase().includes('urodzin');
+
+            if (isBirthDate) {
+                Alert.alert(
+                    'Informacja',
+                    'Daty urodzenia nie można zmienić samodzielnie. Jeśli popełniłeś błąd, skontaktuj się z administratorem.'
+                );
+                return;
+            }
+
+            // Lock Gender (129) and Name fields for non-admins
+            const isRestrictedField = field.id == 129 ||
+                field.name?.toLowerCase().includes('imię') ||
+                field.name?.toLowerCase().includes('name');
+
+            if (isRestrictedField && !isAdmin) {
+                Alert.alert(
+                    'Informacja',
+                    'Tego pola nie można zmienić samodzielnie. Jeśli chcesz je poprawić, skontaktuj się z administratorem.'
+                );
+                return;
+            }
+
             // Parse existing date or use current date
             const existingDate = currentValue ? new Date(currentValue) : new Date();
             setSelectedDate(isNaN(existingDate.getTime()) ? new Date() : existingDate);
@@ -154,6 +189,7 @@ const ProfileScreen = ({ route }) => {
             // Use TextInput for text fields
             setEditingFieldId(field.id);
             setEditingValue(currentValue);
+            editingValueRef.current = currentValue;
         }
     };
 
@@ -165,17 +201,30 @@ const ProfileScreen = ({ route }) => {
         setSavingFieldId(currentEditingField.id);
 
         try {
-            await updateXProfileField(currentEditingField.id, option.value);
+            const result = await updateXProfileField(currentEditingField.id, option.value);
 
-            // Refetch member data
-            const data = await getMember(userId);
-            try {
-                const xprofileGroups = await getXProfileGroups(userId);
-                data.xprofile = { groups: xprofileGroups };
-            } catch (xprofileError) {
-                console.log('XProfile fetch failed:', xprofileError);
-            }
-            setMember(data);
+            // Update local state immediately with the updated value from server
+            const newValue = result.value || option.value;
+            setMember(prev => {
+                const newMember = { ...prev };
+                if (newMember.xprofile && newMember.xprofile.groups) {
+                    newMember.xprofile.groups = newMember.xprofile.groups.map(group => ({
+                        ...group,
+                        fields: group.fields?.map(f =>
+                            f.id === currentEditingField.id ? { ...f, value: { ...f.value, raw: newValue, rendered: newValue } } : f
+                        )
+                    }));
+                }
+                return newMember;
+            });
+
+            // Refetch in background to stay in sync with everything else
+            getMember(userId).then(data => {
+                getXProfileGroups(userId).then(groups => {
+                    data.xprofile = { groups };
+                    setMember(data);
+                }).catch(() => setMember(data));
+            }).catch(e => console.log('Background refetch failed:', e));
 
             // If gender (129) was changed, update AuthContext userInfo
             if (currentEditingField.id == 129) {
@@ -192,35 +241,56 @@ const ProfileScreen = ({ route }) => {
 
     // Handle saving a field when it loses focus
     const handleFieldBlur = async (fieldId) => {
-        if (!editingValue && editingValue !== '') {
+        const valToSave = editingValueRef.current;
+
+        if (!valToSave && valToSave !== '') {
             setEditingFieldId(null);
             return;
         }
 
+        // Check if fieldId matches what we were actually editing to prevent race conditions
+        if (editingFieldId && String(editingFieldId) !== String(fieldId)) {
+            // This can happen if user clicks another field quickly
+            // We should still try to save if we have a valueRef, but use fieldId
+        }
+
         // Check if value actually changed
         const originalValue = getOriginalFieldValue(fieldId);
-        if (editingValue === originalValue) {
+        if (valToSave === originalValue) {
             setEditingFieldId(null);
             return;
         }
 
         setSavingFieldId(fieldId);
         try {
-            await updateXProfileField(fieldId, editingValue);
+            const result = await updateXProfileField(fieldId, valToSave);
 
-            // Refetch member data
-            const data = await getMember(userId);
-            try {
-                const xprofileGroups = await getXProfileGroups(userId);
-                data.xprofile = { groups: xprofileGroups };
-            } catch (xprofileError) {
-                console.log('XProfile fetch failed:', xprofileError);
-            }
-            setMember(data);
+            // Update local state immediately
+            const newValue = result.value || valToSave;
+            setMember(prev => {
+                const newMember = { ...prev };
+                if (newMember.xprofile && newMember.xprofile.groups) {
+                    newMember.xprofile.groups = newMember.xprofile.groups.map(group => ({
+                        ...group,
+                        fields: group.fields?.map(f =>
+                            String(f.id) === String(fieldId) ? { ...f, value: { ...f.value, raw: newValue, rendered: newValue } } : f
+                        )
+                    }));
+                }
+                return newMember;
+            });
+
+            // Refetch in background
+            getMember(userId).then(data => {
+                getXProfileGroups(userId).then(groups => {
+                    data.xprofile = { groups };
+                    setMember(data);
+                }).catch(() => setMember(data));
+            }).catch(e => console.log('Background refetch failed:', e));
 
             // If gender (129) was changed, update AuthContext userInfo
             if (fieldId == 129) {
-                updateUserInfo({ gender: editingValue });
+                updateUserInfo({ gender: valToSave });
             }
         } catch (error) {
             console.error('Error saving field:', error);
@@ -327,7 +397,7 @@ const ProfileScreen = ({ route }) => {
         }
 
         let result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images'],
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
             allowsEditing: true,
             aspect: [4, 5],
             quality: 0.8,
@@ -343,9 +413,9 @@ const ProfileScreen = ({ route }) => {
         try {
             const data = new FormData();
 
-            // Find the first empty slot (2-6 because 1 is avatar)
+            // Find the next slot (1-6)
             const currentGalleryCount = member.gallery?.length || 0;
-            const nextSlot = currentGalleryCount + 2; // +1 for 1-based, +1 for skipping avatar
+            const nextSlot = currentGalleryCount + 1;
 
             if (nextSlot > 6) {
                 Alert.alert('Limit zdjęć', 'Możesz mieć maksymalnie 6 zdjęć (wliczając profilowe).');
@@ -366,6 +436,12 @@ const ProfileScreen = ({ route }) => {
                 // Refetch member data
                 const updatedData = await getMember(userId);
                 setMember(updatedData);
+                if (isOwnProfile) {
+                    updateUserInfo({
+                        avatar_urls: updatedData.avatar_urls,
+                        hires_avatar: updatedData.hires_avatar
+                    });
+                }
             } else {
                 Alert.alert('Błąd', 'Nie udało się przesłać zdjęcia.');
             }
@@ -388,10 +464,16 @@ const ProfileScreen = ({ route }) => {
             // Refresh member data
             const data = await getMember(userId);
             setMember(data);
+            if (isOwnProfile) {
+                updateUserInfo({
+                    avatar_urls: data.avatar_urls,
+                    hires_avatar: data.hires_avatar
+                });
+            }
             setShowGalleryPicker(false);
         } catch (error) {
             console.error('Error swapping avatar:', error);
-            Alert.alert("Błąd", "Nie udało się zmienić zdjęcia profilowego.");
+            Alert.alert("Error", "Failed to change profile picture.");
         } finally {
             setIsSwappingAvatar(false);
         }
@@ -399,16 +481,17 @@ const ProfileScreen = ({ route }) => {
 
     const handleDeletePhoto = async (photoId) => {
         Alert.alert(
-            "Usuń zdjęcie",
-            "Czy na pewno chcesz usunąć to zdjęcie z galerii?",
+            "Delete photo",
+            "Are you sure you want to delete this photo from your gallery?",
             [
-                { text: "Anuluj", style: "cancel" },
+                { text: "Cancel", style: "cancel" },
                 {
-                    text: "Usuń",
+                    text: "Delete",
                     style: "destructive",
                     onPress: async () => {
                         try {
                             setIsUploading(true);
+                            // We use updateOnboarding for photo deletion as well, similar to Empaths
                             const formData = new FormData();
                             formData.append('delete_photo_id', photoId);
 
@@ -418,10 +501,10 @@ const ProfileScreen = ({ route }) => {
                             const updatedData = await getMember(userId);
                             setMember(updatedData);
 
-                            Alert.alert("Sukces", "Zdjęcie zostało usunięte.");
+                            Alert.alert("Success", "Photo deleted.");
                         } catch (error) {
                             console.error('Error deleting photo:', error);
-                            Alert.alert("Błąd", "Nie udało się usunąć zdjęcia.");
+                            Alert.alert("Error", "Failed to delete photo.");
                         } finally {
                             setIsUploading(false);
                         }
@@ -432,15 +515,81 @@ const ProfileScreen = ({ route }) => {
     };
 
     const handleAllowChat = async () => {
-        if (!member) return;
+        if (!member || messageLoading) return;
+
         try {
-            const { sendMessage } = require('../api/messages');
-            await sendMessage(member.id, 'Prawdziwa Miłość', 'Użytkowniczka pozwala Ci ze sobą porozmawiać.');
-            Alert.alert('Sukces', `Pozwoliłaś użytkownikowi ${member.name} na rozmowę.`);
+            setMessageLoading(true);
+            const action = member.chat_allowed_by_me ? 'revoke' : 'allow';
+
+            // Optimistic update
+            const oldState = member.chat_allowed_by_me;
+            setMember(prev => ({
+                ...prev,
+                chat_allowed_by_me: !prev.chat_allowed_by_me
+            }));
+
+            const result = await allowChat(member.id, action);
+
+            if (!result || !result.success) {
+                // Revert if failed
+                setMember(prev => ({
+                    ...prev,
+                    chat_allowed_by_me: oldState
+                }));
+                Alert.alert('Błąd', 'Nie udało się zmienić uprawnień rozmowy.');
+            } else {
+                // Success - ensure state matches result if returned
+                if (result.chat_allowed !== undefined) {
+                    setMember(prev => ({
+                        ...prev,
+                        chat_allowed_by_me: result.chat_allowed
+                    }));
+                }
+
+                // Show correct message
+                if (action === 'revoke') {
+                    Alert.alert('Sukces', 'Cofnięto pozwolenie na rozmowę.');
+                } else {
+                    Alert.alert('Sukces', `Pozwoliłaś użytkownikowi ${member.name} na rozmowę.`);
+                }
+            }
         } catch (error) {
-            console.log('Error allowing chat:', error);
-            Alert.alert('Błąd', 'Nie udało się wysłać powiadomienia.');
+            console.log('Error allowing/revoking chat:', error);
+            setMember(prev => ({
+                ...prev,
+                chat_allowed_by_me: !prev.chat_allowed_by_me // Revert
+            }));
+            Alert.alert('Błąd', 'Wystąpił problem podczas komunikacji z serwerem.');
+        } finally {
+            setMessageLoading(false);
         }
+    };
+
+    const handleDeleteAccount = async () => {
+        Alert.alert(
+            "Usuń konto",
+            "Czy na pewno chcesz usunąć konto? Tej operacji nie można cofnąć.",
+            [
+                { text: "Anuluj", style: "cancel" },
+                {
+                    text: "Usuń",
+                    style: "destructive",
+                    onPress: async () => {
+                        try {
+                            const result = await deleteAccount();
+                            if (result.success) {
+                                // Context handles navigation state via token clear
+                            } else {
+                                Alert.alert("Błąd", result.error);
+                            }
+                        } catch (error) {
+                            console.error('Delete error:', error);
+                            Alert.alert("Błąd", "Wystąpił problem podczas usuwania konta.");
+                        }
+                    }
+                }
+            ]
+        );
     };
 
     const handleBlockPress = () => {
@@ -466,6 +615,27 @@ const ProfileScreen = ({ route }) => {
                 }
             ]
         );
+    };
+
+    const handlePreferenceToggle = async (key, currentValue) => {
+        if (updatingPreference) return;
+
+        setUpdatingPreference(true);
+        const newValue = !currentValue;
+
+        try {
+            await updatePreference(key, newValue);
+            // Update local state
+            setMember(prev => ({
+                ...prev,
+                [key.replace('sk_', '')]: newValue
+            }));
+        } catch (error) {
+            console.error('Failed to update preference:', error);
+            Alert.alert('Błąd', 'Nie udało się zapisać ustawień prywatności.');
+        } finally {
+            setUpdatingPreference(false);
+        }
     };
 
     const getGender = (user) => {
@@ -498,7 +668,7 @@ const ProfileScreen = ({ route }) => {
     return (
         <>
             <ScrollView style={styles.container}>
-                <View style={[styles.topBar, { marginTop: insets.top + 10 }]}>
+                <View style={[styles.topBar, { paddingTop: insets.top, paddingBottom: 5 }]}>
                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
                         <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
                         <Text style={[styles.backButtonText, { color: '#FFFFFF' }]}> Back</Text>
@@ -525,7 +695,7 @@ const ProfileScreen = ({ route }) => {
                         )}
                     </View>
                     <Text style={styles.name}>{member.name}</Text>
-                    <Text style={styles.mention}>@{member.mention_name}</Text>
+                    {/* <Text style={styles.mention}>@{member.mention_name}</Text> */}
 
                     {/* Profile Badges (Pills) */}
                     <View style={styles.profileTagsContainer}>
@@ -578,17 +748,38 @@ const ProfileScreen = ({ route }) => {
                             onPress={() => setShowSuperMessageModal(true)}
                         >
                             <Ionicons name="mail" size={20} color="#FFD700" style={styles.messageIcon} />
-                            <Text style={styles.superMessagePremiumLabel}>SUPER WIADOMOŚĆ (PREMIUM)</Text>
+                            <Text style={styles.superMessagePremiumLabel}>SUPERMSG</Text>
                         </TouchableOpacity>
                     )}
 
                     {!isOwnProfile && userInfo?.gender?.toLowerCase() === 'kobieta' && getGender(member)?.toLowerCase() === 'mężczyzna' && (
                         <TouchableOpacity
-                            style={[styles.messageButton, styles.allowChatButtonHeader]}
+                            style={[
+                                styles.messageButton,
+                                styles.allowChatButtonHeader,
+                                member.chat_allowed_by_me && styles.allowChatButtonHeaderEnabled
+                            ]}
                             onPress={handleAllowChat}
+                            disabled={messageLoading}
                         >
-                            <Ionicons name="checkmark" size={24} color="#808000" style={styles.messageIcon} />
-                            <Text style={styles.allowChatButtonTextHeader}>Pozwól porozmawiać</Text>
+                            {messageLoading ? (
+                                <ActivityIndicator size="small" color={member.chat_allowed_by_me ? "#FF3B30" : "#2ECC71"} style={styles.messageIcon} />
+                            ) : (
+                                <View style={styles.iconContainer}>
+                                    <Ionicons
+                                        name={member.chat_allowed_by_me ? "close-circle" : "chatbubble-ellipses-outline"}
+                                        size={24}
+                                        color={member.chat_allowed_by_me ? "#FF3B30" : "#808000"}
+                                        style={styles.messageIcon}
+                                    />
+                                </View>
+                            )}
+                            <Text style={[
+                                styles.allowChatButtonTextHeader,
+                                member.chat_allowed_by_me && { color: '#FF3B30' }
+                            ]}>
+                                {member.chat_allowed_by_me ? 'Cofnij pozwolenie' : 'Pozwól porozmawiać'}
+                            </Text>
                         </TouchableOpacity>
                     )}
                 </View>
@@ -611,12 +802,14 @@ const ProfileScreen = ({ route }) => {
                                         <Image source={{ uri: photo.url }} style={styles.galleryImage} />
                                     </TouchableOpacity>
                                     {isOwnProfile && (
-                                        <TouchableOpacity
-                                            style={styles.deletePhotoButton}
-                                            onPress={() => handleDeletePhoto(photo.id)}
-                                        >
-                                            <Ionicons name="close-circle" size={26} color="#FF6B6B" />
-                                        </TouchableOpacity>
+                                        <View style={{ position: 'absolute', right: 5, top: 5 }}>
+                                            <TouchableOpacity
+                                                style={{ backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 15, padding: 5 }}
+                                                onPress={() => handleDeletePhoto(photo.id)}
+                                            >
+                                                <Ionicons name="close-circle" size={20} color="#FF6B6B" />
+                                            </TouchableOpacity>
+                                        </View>
                                     )}
                                 </View>
                             ))}
@@ -634,74 +827,212 @@ const ProfileScreen = ({ route }) => {
                 )}
 
                 <View style={styles.contentContainer}>
-                    {member.xprofile && member.xprofile.groups && member.xprofile.groups.map((group, index) => (
-                        <View key={index} style={styles.group}>
-                            <Text style={styles.groupName}>{group.name}</Text>
-                            {group.fields && Array.isArray(group.fields) && group.fields.length > 0 ? (
-                                group.fields.filter(f => ![303, 346, 351, 356, 362].includes(parseInt(f.id))).map((field, fIndex) => {
-                                    // Extract value from various possible locations
-                                    const fieldValue = field.value?.raw ||
-                                        field.value?.rendered ||
-                                        field.data?.value?.raw ||
-                                        field.data?.value?.rendered ||
-                                        field.value ||
-                                        '';
+                    {/* Hero Description Section */}
+                    {(() => {
+                        if (!member?.xprofile?.groups) return null;
+                        let descField = null;
+                        for (const group of member.xprofile.groups) {
+                            for (const field of group.fields || []) {
+                                const name = (field.name || '').toLowerCase();
+                                const type = (field.type?.name || field.type || '').toLowerCase();
+                                if (type === 'textarea' || name.includes('o mnie') || name.includes('opis') || name.includes('bio')) {
+                                    descField = field;
+                                    break;
+                                }
+                            }
+                            if (descField) break;
+                        }
+
+                        if (!descField) return null;
+
+                        const fieldValue = descField.value?.raw || descField.value?.rendered || descField.value || '';
+                        const isEditing = editingFieldId == descField.id;
+                        const isSaving = savingFieldId == descField.id;
+
+                        if (!isOwnProfile && !fieldValue) return null;
+
+                        return (
+                            <View style={[styles.group, styles.descriptionGroup]}>
+                                <View style={styles.fieldHeader}>
+                                    <View>
+                                        <Text style={styles.groupName}>{descField.name}</Text>
+                                        {!fieldValue && isOwnProfile && (
+                                            <Text style={styles.promptText}>Dodaj opis, aby inni mogli Cię lepiej poznać!</Text>
+                                        )}
+                                    </View>
+                                    {isSaving && <ActivityIndicator size="small" color="#2ECC71" />}
+                                </View>
+
+                                {isEditing ? (
+                                    <TextInput
+                                        style={[styles.input, styles.descriptionInput]}
+                                        value={editingValue}
+                                        onChangeText={(text) => {
+                                            setEditingValue(text);
+                                            editingValueRef.current = text;
+                                        }}
+                                        onBlur={() => handleFieldBlur(descField.id)}
+                                        autoFocus={true}
+                                        multiline={true}
+                                        numberOfLines={10}
+                                        blurOnSubmit={false}
+                                        placeholder="Opisz siebie..."
+                                        placeholderTextColor="#999"
+                                    />
+                                ) : (
+                                    <TouchableOpacity
+                                        onPress={() => handleFieldPress(descField, fieldValue)}
+                                        disabled={!isOwnProfile}
+                                        activeOpacity={isOwnProfile ? 0.7 : 1}
+                                    >
+                                        <Text style={[
+                                            styles.descriptionValue,
+                                            isOwnProfile && styles.editableDescriptionValue,
+                                            !fieldValue && { fontStyle: 'italic', color: '#6E6E73' }
+                                        ]}>
+                                            {fieldValue || 'Brak opisu...'}
+                                        </Text>
+                                    </TouchableOpacity>
+                                )}
+                            </View>
+                        );
+                    })()}
 
 
-                                    // Only show fields with non-empty values, 
-                                    // unless it's our own profile so we can fill them in
-                                    const showAnyway = isOwnProfile;
-                                    if ((!fieldValue || fieldValue === '') && !showAnyway) {
-                                        return null;
-                                    }
+                    {member.xprofile && member.xprofile.groups && member.xprofile.groups.map((group, index) => {
+                        // Hide "Base" group for regular users
+                        const gName = (group.name || '').toLowerCase();
+                        const isBaseGroup = gName.includes('base') || gName.includes('podstawowe');
+                        if (isBaseGroup && !isAdmin && !isOwnProfile) return null;
 
-                                    const isEditing = editingFieldId === field.id;
-                                    const isSaving = savingFieldId === field.id;
-                                    const fieldType = field.type?.name || field.type || 'textbox';
+                        return (
+                            <View key={index} style={styles.group}>
+                                <Text style={styles.groupName}>{group.name}</Text>
+                                {group.fields && Array.isArray(group.fields) && group.fields.length > 0 ? (
+                                    group.fields.filter(f => {
+                                        const isSpecialField = [303, 346, 351, 356, 362, 133, 215, 108, 334].includes(parseInt(f.id));
+                                        const fieldName = (f.name || '').toLowerCase();
+                                        const isDescription = (f.type?.name || f.type || '').toLowerCase() === 'textarea' ||
+                                            fieldName.includes('o mnie') || fieldName.includes('opis') || fieldName.includes('bio');
 
-                                    return (
-                                        <View key={fIndex} style={styles.field}>
-                                            <View style={styles.fieldHeader}>
-                                                <Text style={styles.label}>{field.name}</Text>
-                                                {isSaving && (
-                                                    <ActivityIndicator size="small" color="#2ECC71" />
+                                        // Hide special fields (pills) and the hero description from the general list
+                                        if (isDescription) return false;
+
+                                        // Hide Name, Gender, and Birth Date for regular users
+                                        // Name is in header, specific fields are restricted
+                                        const isRestricted = (
+                                            fieldName.includes('imię') ||
+                                            fieldName.includes('name') ||
+                                            f.id == 129 ||
+                                            f.id == 107 ||
+                                            fieldName.includes('urodzenia') ||
+                                            fieldName.includes('birth') ||
+                                            fieldName.includes('szukam')
+                                        );
+
+                                        if (isRestricted && !isAdmin && !isOwnProfile) {
+                                            return false;
+                                        }
+
+                                        // if (isSpecialField && !isOwnProfile) {
+                                        //    return false;
+                                        // }
+                                        return true;
+                                    }).map((field, fIndex) => {
+                                        // Extract value from various possible locations
+                                        const fieldValue = field.value?.raw ||
+                                            field.value?.rendered ||
+                                            field.data?.value?.raw ||
+                                            field.data?.value?.rendered ||
+                                            field.value ||
+                                            '';
+
+
+                                        // Only show fields with non-empty values,
+                                        // unless it's our own profile so we can fill them in
+                                        const showAnyway = isOwnProfile;
+                                        if ((!fieldValue || fieldValue === '') && !showAnyway) {
+                                            return null;
+                                        }
+
+                                        const isEditing = editingFieldId === field.id;
+                                        const isSaving = savingFieldId === field.id;
+                                        const fieldType = field.type?.name || field.type || 'textbox';
+
+                                        const isBirthDate = fieldType === 'datebox' && (
+                                            field.name?.toLowerCase().includes('urodzenia') ||
+                                            field.name?.toLowerCase().includes('birth') ||
+                                            field.name?.toLowerCase().includes('urodzin')
+                                        );
+                                        const canEditToggle = isOwnProfile && !isBirthDate;
+
+                                        return (
+                                            <View key={fIndex} style={styles.field}>
+                                                <View style={styles.fieldHeader}>
+                                                    <Text style={styles.label}>{field.name}</Text>
+                                                    {isSaving && (
+                                                        <ActivityIndicator size="small" color="#2ECC71" />
+                                                    )}
+                                                </View>
+                                                {isEditing ? (
+                                                    <TextInput
+                                                        style={styles.input}
+                                                        value={editingValue}
+                                                        onChangeText={(text) => {
+                                                            setEditingValue(text);
+                                                            editingValueRef.current = text;
+                                                        }}
+                                                        onBlur={() => handleFieldBlur(field.id)}
+                                                        autoFocus={true}
+                                                        multiline={fieldType === 'textarea'}
+                                                        placeholder={field.name}
+                                                        placeholderTextColor="#999"
+                                                    />
+                                                ) : (
+                                                    <TouchableOpacity
+                                                        onPress={() => handleFieldPress(field, fieldValue)}
+                                                        disabled={!canEditToggle}
+                                                        activeOpacity={canEditToggle ? 0.7 : 1}
+                                                    >
+                                                        <Text style={[
+                                                            styles.value,
+                                                            canEditToggle && styles.editableValue
+                                                        ]}>
+                                                            {fieldType === 'datebox' && fieldValue
+                                                                ? new Date(fieldValue).toLocaleDateString('pl-PL')
+                                                                : fieldValue}
+                                                        </Text>
+                                                    </TouchableOpacity>
                                                 )}
                                             </View>
-                                            {isEditing ? (
-                                                <TextInput
-                                                    style={styles.input}
-                                                    value={editingValue}
-                                                    onChangeText={setEditingValue}
-                                                    onBlur={() => handleFieldBlur(field.id)}
-                                                    autoFocus={true}
-                                                    multiline={fieldType === 'textarea'}
-                                                    placeholder={field.name}
-                                                    placeholderTextColor="#999"
-                                                />
-                                            ) : (
-                                                <TouchableOpacity
-                                                    onPress={() => handleFieldPress(field, fieldValue)}
-                                                    disabled={!isOwnProfile}
-                                                    activeOpacity={isOwnProfile ? 0.7 : 1}
-                                                >
-                                                    <Text style={[
-                                                        styles.value,
-                                                        isOwnProfile && styles.editableValue
-                                                    ]}>
-                                                        {fieldType === 'datebox' && fieldValue
-                                                            ? new Date(fieldValue).toLocaleDateString('pl-PL')
-                                                            : fieldValue}
-                                                    </Text>
-                                                </TouchableOpacity>
-                                            )}
-                                        </View>
-                                    );
-                                })
-                            ) : (
-                                <Text style={styles.emptyText}>No information provided</Text>
-                            )}
+                                        );
+                                    })
+                                ) : (
+                                    <Text style={styles.emptyText}>No information provided</Text>
+                                )}
+                            </View>
+                        )
+                    })}
+
+                    {isOwnProfile && (
+                        <View style={[styles.group, { borderTopWidth: 1, borderTopColor: 'rgba(255, 255, 255, 0.1)', paddingTop: 24, marginTop: 10 }]}>
+                            <Text style={styles.groupName}>Prywatność</Text>
+                            <View style={styles.fieldItem}>
+                                <View style={styles.fieldInfo}>
+                                    <Text style={styles.fieldName}>Ukryj mój wiek</Text>
+                                    <Text style={styles.fieldValueText}>
+                                        {member.hide_age ? 'Wiek nie jest widoczny dla innych' : 'Wiek jest widoczny publicznie'}
+                                    </Text>
+                                </View>
+                                <Switch
+                                    value={!!member.hide_age}
+                                    onValueChange={() => handlePreferenceToggle('sk_hide_age', !!member.hide_age)}
+                                    trackColor={{ false: "#3A3A3C", true: "#2ECC71" }}
+                                    thumbColor="#FFFFFF"
+                                    disabled={updatingPreference}
+                                />
+                            </View>
                         </View>
-                    )
                     )}
 
                     {/* Contact / Feedback Section */}
@@ -711,8 +1042,8 @@ const ProfileScreen = ({ route }) => {
                             <TouchableOpacity
                                 style={styles.contactButton}
                                 onPress={() => {
-                                    const subject = `Feedback Prawdziwa Miłość (User: ${member.id})`;
-                                    const body = `Cześć,\n\nChciałbym zgłosić następujący feedback:\n\n`;
+                                    const subject = `Feedback Prawdziwa Miłość(User: ${member.id})`;
+                                    const body = `Cześć, \n\nChciałbym zgłosić następujący feedback: \n\n`;
                                     const mailUrl = `mailto:admin@prawdziwamilosc.pl?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 
                                     Linking.canOpenURL(mailUrl)
@@ -773,8 +1104,8 @@ const ProfileScreen = ({ route }) => {
                             <TouchableOpacity
                                 style={[styles.contactButton, { marginBottom: 12 }]}
                                 onPress={() => {
-                                    const subject = `ZGŁOSZENIE UŻYTKOWNIKA (ID: ${member.id})`;
-                                    const body = `Zgłaszam użytkownika ${member.name} (ID: ${member.id}) z powodu:\n\n`;
+                                    const subject = `ZGŁOSZENIE UŻYTKOWNIKA(ID: ${member.id})`;
+                                    const body = `Zgłaszam użytkownika ${member.name} (ID: ${member.id}) z powodu: \n\n`;
                                     const mailUrl = `mailto:admin@prawdziwamilosc.pl?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 
                                     Linking.canOpenURL(mailUrl)
@@ -1089,26 +1420,22 @@ const styles = StyleSheet.create({
     // Profile header section
     header: {
         alignItems: 'center',
-        paddingVertical: 30,
+        paddingVertical: 5,
         paddingHorizontal: 20,
     },
     avatar: {
-        width: 130,
-        height: 130,
-        borderRadius: 65,
-        marginBottom: 0,
-        borderWidth: 4,
+        width: 120,
+        height: 120,
+        borderRadius: 60,
+        marginBottom: 10,
+        borderWidth: 3,
         borderColor: '#E8B4B8',
-        shadowColor: '#E8B4B8',
-        shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.4,
-        shadowRadius: 15,
     },
     name: {
         fontSize: 28,
         fontWeight: '700',
         color: '#FFFFFF',
-        marginBottom: 6,
+        marginBottom: 0,
         letterSpacing: 0.5,
     },
     mention: {
@@ -1126,7 +1453,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: 28,
         paddingVertical: 14,
         borderRadius: 30,
-        marginTop: 20,
+        marginTop: 10,
         shadowColor: '#E8B4B8',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.35,
@@ -1145,7 +1472,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#1a1a2e',
         borderWidth: 2,
         borderColor: '#FFD700',
-        marginTop: 10,
+        marginTop: 8,
     },
     superMessagePremiumLabel: {
         color: '#FFD700',
@@ -1157,38 +1484,31 @@ const styles = StyleSheet.create({
     // Content area
     contentContainer: {
         paddingHorizontal: 16,
+        paddingTop: 8,
         paddingBottom: 40,
     },
 
     // Premium glassmorphism cards
     group: {
-        marginBottom: 20,
+        marginBottom: 16,
         backgroundColor: 'rgba(28, 28, 30, 0.95)',
         borderRadius: 20,
-        padding: 20,
+        padding: 16,
         borderWidth: 1,
         borderColor: 'rgba(255, 255, 255, 0.08)',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.3,
-        shadowRadius: 16,
-        elevation: 6,
     },
     groupName: {
-        fontSize: 13,
+        fontSize: 12,
         fontWeight: '700',
-        color: '#E8B4B8',
-        marginBottom: 18,
-        letterSpacing: 2,
+        color: '#8E8E93',
+        marginBottom: 12,
+        letterSpacing: 1.5,
         textTransform: 'uppercase',
     },
 
     // Field styling
     field: {
-        marginBottom: 18,
-        paddingBottom: 18,
-        borderBottomWidth: 1,
-        borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+        marginBottom: 12,
     },
     label: {
         fontSize: 11,
@@ -1225,15 +1545,44 @@ const styles = StyleSheet.create({
 
     // Input styling for editing
     input: {
-        fontSize: 17,
+        fontSize: 16,
         color: '#FFFFFF',
         fontWeight: '500',
         backgroundColor: 'rgba(255, 255, 255, 0.08)',
-        padding: 14,
+        padding: 12,
         borderRadius: 12,
         borderWidth: 2,
         borderColor: '#E8B4B8',
-        minHeight: 48,
+        minHeight: 44,
+    },
+    descriptionInput: {
+        minHeight: 200,
+        textAlignVertical: 'top',
+        paddingTop: 12,
+        lineHeight: 22,
+    },
+    descriptionGroup: {
+        marginBottom: 20,
+    },
+    descriptionValue: {
+        fontSize: 16,
+        color: '#EBEBF5',
+        lineHeight: 24,
+        backgroundColor: 'rgba(255,255,255,0.03)',
+        padding: 16,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
+    },
+    editableDescriptionValue: {
+        borderStyle: 'dashed',
+        borderColor: 'rgba(232, 180, 184, 0.3)',
+    },
+    promptText: {
+        fontSize: 13,
+        color: '#E8B4B8',
+        opacity: 0.8,
+        marginBottom: 4,
     },
 
     // Premium dark modal
@@ -1344,17 +1693,17 @@ const styles = StyleSheet.create({
     // Gallery Styles
     galleryContainer: {
         paddingHorizontal: 16,
-        marginTop: 20,
-        marginBottom: 24,
+        marginTop: 8,
+        marginBottom: 12,
     },
     galleryScroll: {
         paddingRight: 16,
-        paddingTop: 12, // More padding to accommodate the delete icons hanging above the items
+        paddingTop: 4, // More padding to accommodate the delete icons hanging above the items
     },
     galleryItem: {
         width: 100,
         height: 125,
-        marginRight: 12,
+        marginRight: 0,
         borderRadius: 12,
         overflow: 'hidden',
         backgroundColor: 'rgba(255, 255, 255, 0.05)',
@@ -1371,7 +1720,7 @@ const styles = StyleSheet.create({
     },
     galleryItemWrapper: {
         position: 'relative',
-        marginRight: 12,
+        marginRight: 6,
     },
     deletePhotoButton: {
         position: 'absolute',
@@ -1384,7 +1733,7 @@ const styles = StyleSheet.create({
     },
     avatarContainer: {
         position: 'relative',
-        marginBottom: 20,
+        marginBottom: 8,
     },
     changeAvatarButton: {
         position: 'absolute',
@@ -1452,7 +1801,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: 25,
         borderRadius: 25,
         alignItems: 'center',
-        marginTop: 10,
+        marginTop: 8,
         width: '80%',
         justifyContent: 'center',
         borderWidth: 1.5,
@@ -1479,10 +1828,29 @@ const styles = StyleSheet.create({
         borderRadius: 6,
         padding: 1,
     },
+    allowChatButtonHeaderEnabled: {
+        borderColor: '#2ECC71',
+        backgroundColor: 'rgba(46, 204, 113, 0.1)',
+    },
+    iconContainer: {
+        position: 'relative',
+        marginRight: 10,
+    },
+    greenBadgeBadge: {
+        position: 'absolute',
+        top: -4,
+        right: -4,
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+        backgroundColor: '#2ECC71',
+        borderWidth: 1.5,
+        borderColor: '#1A1A1A',
+    },
     profileTagsContainer: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        marginTop: 15,
+        marginTop: 4,
         justifyContent: 'center',
         alignItems: 'center',
         paddingHorizontal: 20,
@@ -1505,6 +1873,32 @@ const styles = StyleSheet.create({
     zodiacTag: {
         backgroundColor: 'rgba(212, 175, 55, 0.2)',
         borderColor: '#d4af37',
+    },
+
+    // Privacy Section Styling
+    fieldItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: 14,
+        backgroundColor: 'rgba(255, 255, 255, 0.05)',
+        paddingHorizontal: 16,
+        borderRadius: 14,
+        marginTop: 8,
+    },
+    fieldInfo: {
+        flex: 1,
+        marginRight: 10,
+    },
+    fieldName: {
+        fontSize: 16,
+        color: '#FFFFFF',
+        fontWeight: '600',
+    },
+    fieldValueText: {
+        fontSize: 13,
+        color: '#8E8E93',
+        marginTop: 4,
     },
 });
 

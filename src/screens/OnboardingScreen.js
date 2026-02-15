@@ -19,6 +19,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { AuthContext } from '../context/AuthContext';
 import { updateOnboarding } from '../api/members';
 import { useTheme } from '@react-navigation/native';
+import * as ImageManipulator from 'expo-image-manipulator';
 
 const { width } = Dimensions.get('window');
 
@@ -35,6 +36,7 @@ const OnboardingScreen = () => {
 
     const [formData, setFormData] = useState({
         dataurodzenia: '',
+        plec: '',
         kogo_szukam: '',
         religia: '',
         polityka: '',
@@ -44,14 +46,29 @@ const OnboardingScreen = () => {
     const [photos, setPhotos] = useState([null, null, null, null, null, null]);
 
     useEffect(() => {
+        if (userInfo) {
+            // Fill initial data if exists
+            const initialData = { ...formData };
+            if (userInfo.gender) initialData.plec = userInfo.gender;
+            // We could also pre-fill other fields if we had them in userInfo, 
+            // but currently userInfo is mostly basic data.
+
+            // Only update if actually different to avoid loop (though useEffect dep is userInfo)
+            if (userInfo.gender && !formData.plec) {
+                setFormData(prev => ({ ...prev, plec: userInfo.gender }));
+            }
+        }
+
         if (userInfo?.avatar_urls?.full && !photos[0]) {
+            const avatarUrl = userInfo.avatar_urls.full;
             const newPhotos = [...photos];
-            newPhotos[0] = { uri: userInfo.avatar_urls.full, isRemote: true };
+            newPhotos[0] = { uri: avatarUrl, isRemote: true };
             setPhotos(newPhotos);
         }
     }, [userInfo]);
 
     const fieldOptions = {
+        plec: ['Kobieta', 'Mężczyzna', 'Inna'],
         kogo_szukam: ['Kobiety', 'Mężczyzny', 'Wszystkich'],
         religia: ['Wierzący', 'Ateista', 'Duchowy', 'Inne'],
         polityka: ['Konserwatywne', 'Liberalne', 'Centrowe', 'Apolityczny'],
@@ -91,6 +108,22 @@ const OnboardingScreen = () => {
         setFormData({ ...formData, dataurodzenia: formatted });
     };
 
+    // Helper function to compress image
+    const compressImage = async (uri) => {
+        try {
+            const result = await ImageManipulator.manipulateAsync(
+                uri,
+                [], // No resizing, just compression/conversion
+                { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG }
+            );
+            return result;
+        } catch (error) {
+            console.error("Image compression error:", error);
+            // Fallback to original uri if manipulation fails
+            return { uri };
+        }
+    };
+
     const pickImage = async (index) => {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (status !== 'granted') {
@@ -105,9 +138,17 @@ const OnboardingScreen = () => {
             quality: 0.8,
         });
 
-        if (!result.canceled) {
+        if (!result.canceled && result.assets && result.assets.length > 0) {
+            const originalAsset = result.assets[0];
+
+            // Compress/Convert to JPEG
+            const compressed = await compressImage(originalAsset.uri);
+
             const newPhotos = [...photos];
-            newPhotos[index] = result.assets[0];
+            newPhotos[index] = {
+                ...originalAsset,
+                uri: compressed.uri // Update URI to the JPEG one
+            };
             setPhotos(newPhotos);
         }
     };
@@ -117,6 +158,10 @@ const OnboardingScreen = () => {
             const birthdateRegex = /^\d{4}-\d{2}-\d{2}$/;
             if (!formData.dataurodzenia || !birthdateRegex.test(formData.dataurodzenia)) {
                 Alert.alert('Błąd', 'Proszę wpisać poprawną datę urodzenia (RRRR-MM-DD).');
+                return;
+            }
+            if (!formData.plec) {
+                Alert.alert('Błąd', 'Proszę zaznaczyć swoją płeć.');
                 return;
             }
             if (!formData.kogo_szukam) {
@@ -216,6 +261,53 @@ const OnboardingScreen = () => {
                                 keyboardType="numeric"
                                 maxLength={10}
                             />
+                        </View>
+                        <View style={styles.inputGroup}>
+                            <Text style={styles.label}>Płeć</Text>
+                            <View style={styles.genderButtons}>
+                                <TouchableOpacity
+                                    style={[
+                                        styles.genderButton,
+                                        formData.plec === 'Kobieta' && styles.genderButtonSelected
+                                    ]}
+                                    onPress={() => setFormData({ ...formData, plec: 'Kobieta' })}
+                                >
+                                    <Text style={[
+                                        styles.genderButtonText,
+                                        formData.plec === 'Kobieta' && styles.genderButtonTextSelected
+                                    ]}>
+                                        Kobieta
+                                    </Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[
+                                        styles.genderButton,
+                                        formData.plec === 'Mężczyzna' && styles.genderButtonSelected
+                                    ]}
+                                    onPress={() => setFormData({ ...formData, plec: 'Mężczyzna' })}
+                                >
+                                    <Text style={[
+                                        styles.genderButtonText,
+                                        formData.plec === 'Mężczyzna' && styles.genderButtonTextSelected
+                                    ]}>
+                                        Mężczyzna
+                                    </Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[
+                                        styles.genderButton,
+                                        formData.plec === 'Inna' && styles.genderButtonSelected
+                                    ]}
+                                    onPress={() => setFormData({ ...formData, plec: 'Inna' })}
+                                >
+                                    <Text style={[
+                                        styles.genderButtonText,
+                                        formData.plec === 'Inna' && styles.genderButtonTextSelected
+                                    ]}>
+                                        Inna
+                                    </Text>
+                                </TouchableOpacity>
+                            </View>
                         </View>
                         <View style={styles.inputGroup}>
                             <Text style={styles.label}>Kogo szukasz?</Text>
@@ -608,7 +700,36 @@ const styles = StyleSheet.create({
     optionTextSelected: {
         color: '#E8B4B8',
         fontWeight: '600',
-    }
+    },
+    // Gender Button Styles
+    genderButtons: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginTop: 5,
+    },
+    genderButton: {
+        flex: 1,
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        paddingVertical: 14,
+        borderRadius: 12,
+        alignItems: 'center',
+        marginHorizontal: 4,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+    },
+    genderButtonSelected: {
+        backgroundColor: 'rgba(232, 180, 184, 0.2)', // translucent pink
+        borderColor: '#E8B4B8',
+    },
+    genderButtonText: {
+        fontSize: 14,
+        color: '#FFFFFF',
+        fontWeight: '600',
+    },
+    genderButtonTextSelected: {
+        color: '#E8B4B8',
+        fontWeight: 'bold',
+    },
 });
 
 export default OnboardingScreen;

@@ -157,3 +157,14 @@ export const updateOnboarding = async (formData) => {
         throw error;
     }
 };
+export const updatePreference = async (key, value) => {
+    try {
+        const response = await client.post('/sk/v1/update-preference', {
+            key: key,
+            value: value
+        });
+        return response.data;
+    } catch (error) {
+        throw error;
+    }
+};

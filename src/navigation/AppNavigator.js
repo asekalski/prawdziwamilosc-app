@@ -17,7 +17,7 @@ import FeedScreen from '../screens/FeedScreen';
 import OnboardingScreen from '../screens/OnboardingScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import { Ionicons } from '@expo/vector-icons';
-import HeartLoader from '../components/HeartLoader';
+import StartupLoader from '../components/StartupLoader';
 import { View } from 'react-native';
 import { createNavigationContainerRef } from '@react-navigation/native';
 import { setupNotificationInteraction } from '../services/NotificationService';
@@ -145,11 +145,7 @@ const AppNavigator = () => {
     }, [userToken]);
 
     if (isLoading) {
-        return (
-            <View style={{ flex: 1, backgroundColor: '#1a1a2e', justifyContent: 'center', alignItems: 'center' }}>
-                <HeartLoader size={80} color="#FF6B9D" />
-            </View>
-        );
+        return <StartupLoader />;
     }
 
     const linking = {
@@ -165,6 +161,29 @@ const AppNavigator = () => {
                 },
                 Login: 'login',
                 Register: 'register',
+                UserProfile: 'members/:username',
+                Messages: {
+                    path: 'messages',
+                },
+                BP_Messages: {
+                    screens: {
+                        Messages: 'members/:username/messages',
+                    },
+                },
+                Feed: {
+                    path: 'activity',
+                },
+                BP_Activity: {
+                    screens: {
+                        Feed: 'members/:username/activity',
+                    },
+                },
+                Main: {
+                    path: '',
+                    screens: {
+                        Members: 'members',
+                    }
+                }
             },
         },
     };

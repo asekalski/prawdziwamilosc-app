@@ -15,7 +15,10 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.prawdziwamilosc.app",
-      "buildNumber": "15",
+      "buildNumber": "27",
+      "associatedDomains": [
+        "applinks:prawdziwamilosc.pl"
+      ],
       "infoPlist": {
         "NSCameraUsageDescription": "Aplikacja potrzebuje dostępu do aparatu, aby umożliwić Ci zrobienie zdjęcia do profilu.",
         "NSPhotoLibraryUsageDescription": "Aplikacja potrzebuje dostępu do galerii, aby umożliwić Ci wybór zdjęcia do profilu.",
@@ -29,6 +32,7 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.prawdziwamilosc.app",
+      "versionCode": 27,
       "intentFilters": [
         {
           "action": "VIEW",
@@ -37,6 +41,21 @@
               "scheme": "https",
               "host": "prawdziwamilosc.pl",
               "pathPrefix": "/activate"
+            },
+            {
+              "scheme": "https",
+              "host": "prawdziwamilosc.pl",
+              "pathPrefix": "/members"
+            },
+            {
+              "scheme": "https",
+              "host": "prawdziwamilosc.pl",
+              "pathPrefix": "/messages"
+            },
+            {
+              "scheme": "https",
+              "host": "prawdziwamilosc.pl",
+              "pathPrefix": "/activity"
             },
             {
               "scheme": "prawdziwamilosc"
@@ -59,7 +78,8 @@
       }
     },
     "plugins": [
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "expo-notifications"
     ]
   }
 }

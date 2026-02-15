@@ -1,15 +1,61 @@
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
-import { Platform } from 'react-native';
+import { Platform, Alert } from 'react-native';
 import Constants from 'expo-constants';
+
+// State for notification suppression
+let activeThreadId = null;
+let currentUserId = null;
+
+export const setNotificationSuppressionState = (state) => {
+    if (state.activeThreadId !== undefined) activeThreadId = state.activeThreadId;
+    if (state.currentUserId !== undefined) currentUserId = state.currentUserId;
+};
 
 // Configure how notifications are handled when the app is foregrounded
 Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-        shouldShowAlert: true,
-        shouldPlaySound: true,
-        shouldSetBadge: true,
-    }),
+    handleNotification: async (notification) => {
+        const data = notification.request.content.data;
+        const threadId = data?.thread_id?.toString();
+        const senderId = data?.sender_id?.toString();
+
+        // 1. Suppress if it's the active thread
+        if (activeThreadId && threadId === activeThreadId) {
+            console.log(`Suppressing foreground notification for active thread: ${threadId}`);
+            return {
+                shouldShowAlert: false,
+                shouldPlaySound: false,
+                shouldSetBadge: true,
+            };
+        }
+
+        // 2. Suppress if it's a self-notification (sender is the current user)
+        if (currentUserId && senderId === currentUserId.toString()) {
+            console.log(`Suppressing self-notification in foreground: ${senderId}`);
+            return {
+                shouldShowAlert: false,
+                shouldPlaySound: false,
+                shouldSetBadge: true,
+            };
+        }
+
+        // 3. Fallback for silent notifications from server
+        // If the server explicitly removed title/body, we shouldn't force an alert
+        const title = notification.request.content.title;
+        if (!title) {
+            return {
+                shouldShowAlert: false,
+                shouldPlaySound: false,
+                shouldSetBadge: true,
+            };
+        }
+
+        return {
+            shouldShowAlert: true,
+            shouldPlaySound: true,
+            shouldSetBadge: true,
+        };
+    },
 });
 
 export async function registerForPushNotificationsAsync() {
@@ -27,14 +73,20 @@ export async function registerForPushNotificationsAsync() {
     if (Device.isDevice) {
         const { status: existingStatus } = await Notifications.getPermissionsAsync();
         let finalStatus = existingStatus;
+
+
         if (existingStatus !== 'granted') {
+            // Alert.alert("Debug", "Requesting Permissions...");
             const { status } = await Notifications.requestPermissionsAsync();
             finalStatus = status;
+            // Alert.alert("Debug", `New status: ${finalStatus}`);
         }
+
         if (finalStatus !== 'granted') {
             console.log('Failed to get push token for push notification!');
             return null;
         }
+
 
         // Get the token from expo-notifications
         // Note: projectId is required for newer Expo versions

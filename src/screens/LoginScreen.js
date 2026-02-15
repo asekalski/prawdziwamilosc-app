@@ -1,5 +1,5 @@
 import React, { useContext, useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, StyleSheet, TouchableOpacity, Dimensions, Animated, Platform, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, StyleSheet, TouchableOpacity, Dimensions, Animated, Platform, ActivityIndicator, Alert } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import { AuthContext } from '../context/AuthContext';
@@ -124,9 +124,11 @@ const LoginScreen = () => {
                     errorMessage = 'Błąd połączenia z serwerem';
                 }
 
-                setError(errorMessage);
+                Alert.alert('Błąd logowania', errorMessage);
+                setError(errorMessage); // Keep this if you want to show it in the UI as well, or remove it. checking user request "should popup".
             }
         } catch (err) {
+            Alert.alert('Błąd', 'Wystąpił nieoczekiwany błąd');
             setError('Wystąpił nieoczekiwany błąd');
             console.error('Login error:', err);
         } finally {
@@ -205,6 +207,7 @@ const LoginScreen = () => {
                         value={password}
                         onChangeText={(text) => handleTextChange(text, setPassword)}
                         secureTextEntry
+                        textContentType="oneTimeCode"
                         style={styles.input}
                         placeholderTextColor="#999"
                     />

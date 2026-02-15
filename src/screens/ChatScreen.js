@@ -10,7 +10,7 @@ import client from '../api/client';
 const ChatScreen = ({ route }) => {
     // 0. Resolve users and participants
     const { threadId, allMessages = [], users: initialUsers = {}, title, participantId, participantAvatar: initialAvatar } = route.params;
-    const { userInfo, refreshUnreadCount } = useContext(AuthContext);
+    const { userInfo, refreshUnreadCount, markThreadReadLocally, setActiveThreadId } = useContext(AuthContext);
     const navigation = useNavigation();
     const insets = useSafeAreaInsets();
 
@@ -84,10 +84,12 @@ const ChatScreen = ({ route }) => {
         setMessages(threadMessages);
         setLoading(false);
 
-        // Mark as read on enter
-        markThreadAsRead(threadId).then(() => {
-            refreshUnreadCount();
-        });
+        // Mark as read on enter - OPTIMISTICALLY
+        if (markThreadReadLocally) {
+            markThreadReadLocally(threadId);
+        }
+
+        markThreadAsRead(threadId).catch(err => console.log('markRead failed', err));
 
         // Fetch full participant details for activity status & up-to-date info
         const fetchParticipantDetails = async () => {
@@ -112,6 +114,17 @@ const ChatScreen = ({ route }) => {
             }
         };
         fetchParticipantDetails();
+
+        // 3. Mark thread as active for notification suppression
+        if (setActiveThreadId && threadId) {
+            setActiveThreadId(threadId.toString());
+        }
+
+        return () => {
+            if (setActiveThreadId) {
+                setActiveThreadId(null);
+            }
+        };
     }, [threadId, participantId]);
 
     // 2. Polling with SIMPLE Merge Logic
@@ -125,7 +138,19 @@ const ChatScreen = ({ route }) => {
                     setUsers(prev => {
                         const next = { ...prev };
                         threadsData.users.forEach(u => {
-                            next[u.user_id || u.id] = u;
+                            const id = u.user_id || u.id;
+                            const existing = next[id] || {};
+
+                            // Smart Merge: generic overwrite from 'u', but preserve 'last_activity' and 'avatar' 
+                            // if the new data is missing it or strictly worse (e.g. null vs string)
+                            next[id] = {
+                                ...existing,
+                                ...u,
+                                // Restore rich fields if missing/empty in new data
+                                last_activity: u.last_activity || existing.last_activity,
+                                avatar: u.avatar || existing.avatar,
+                                name: u.name || existing.name,
+                            };
                         });
                         return next;
                     });
@@ -142,9 +167,12 @@ const ChatScreen = ({ route }) => {
 
                 // If we got new messages, mark thread as read
                 // Mark as read after sync
-                markThreadAsRead(threadId).then(() => {
-                    refreshUnreadCount();
-                });
+                // If we got new messages, mark thread as read - OPTIMISTICALLY
+                if (markThreadReadLocally) {
+                    markThreadReadLocally(threadId);
+                }
+
+                markThreadAsRead(threadId).catch(err => console.log('markRead poll failed', err));
 
                 setMessages(currentMessages => {
                     // Create a map of incoming messages by ID for fast lookup
@@ -281,11 +309,11 @@ const ChatScreen = ({ route }) => {
             const response = await sendReply(threadId, messageText);
 
             // Immediately replace optimistic message with real confirmed message from server
-            if (response.data) {
+            if (response) {
                 setMessages(prev => prev.map(m => {
                     if (m.id === tempId) {
                         // Robust ID check: verify root and nested 'message' object
-                        const serverData = response.data;
+                        const serverData = response;
                         const realId = serverData.id || serverData.message_id || serverData.message?.id || serverData.message?.message_id;
 
                         // If we found a real ID, use it to finalize the message
@@ -343,19 +371,19 @@ const ChatScreen = ({ route }) => {
 
     if (loading) {
         return (
-            <View style={[styles.container, { paddingTop: insets.top }]}>
-                <View style={styles.loadingContainer}><ActivityIndicator size="large" color="#2ECC71" /></View>
+            <View style={styles.container}>
+                <View style={[styles.loadingContainer, { paddingTop: insets.top }]}><ActivityIndicator size="large" color="#2ECC71" /></View>
             </View>
         );
     }
 
     return (
         <KeyboardAvoidingView
-            style={[styles.container, { paddingTop: insets.top }]}
+            style={styles.container}
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
         >
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingTop: insets.top + 5 }]}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
                     <Ionicons name="arrow-back" size={24} color="#fff" />
                 </TouchableOpacity>

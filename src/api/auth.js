@@ -12,13 +12,14 @@ export const loginUser = async (username, password) => {
     }
 };
 
-export const registerUser = async (username, email, password, profileImage = null) => {
+export const registerUser = async (username, email, password, gender, profileImage = null) => {
     try {
         // Używamy FormData do wysłania zdjęcia
         const formData = new FormData();
         formData.append('user_login', username);
         formData.append('user_email', email);
         formData.append('password', password);
+        formData.append('gender', gender);
 
         if (profileImage) {
             // Dodaj zdjęcie do FormData

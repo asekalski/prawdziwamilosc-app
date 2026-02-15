@@ -98,11 +98,6 @@ const SuperMessageModal = ({ visible, recipientId, recipientName, onClose }) => 
                             <Text style={styles.statusText}>
                                 Pozostało: {status.remaining_this_week}/{status.weekly_limit} w tym tygodniu
                             </Text>
-                            {status.is_premium && (
-                                <View style={styles.premiumBadge}>
-                                    <Text style={styles.premiumText}>⭐ Premium</Text>
-                                </View>
-                            )}
                         </View>
                     )}
 

@@ -86,6 +86,25 @@ export const getSkippedUsers = async () => {
     }
 };
 
+// Sync local skipped list with server's blocked list
+export const syncSkippedWithServer = async () => {
+    try {
+        const response = await client.get('/sk/v1/blocked');
+        const serverBlocked = (response.data || []).map(id => Number(id));
+
+        if (serverBlocked.length === 0) return;
+
+        // Merge server blocked IDs into local storage
+        const localSkipped = await getSkippedUserIds();
+        const merged = [...new Set([...localSkipped.map(Number), ...serverBlocked])];
+
+        await AsyncStorage.setItem(SKIPPED_USERS_KEY, JSON.stringify(merged));
+    } catch (error) {
+        console.error('Failed to sync skipped users with server:', error);
+        // Not critical — local list will still work
+    }
+};
+
 // Restore user (remove from skipped)
 export const restoreUser = async (userId) => {
     await removeSkippedUser(userId);

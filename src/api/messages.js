@@ -1,6 +1,6 @@
 import client from './client';
 
-export const getThreads = async (page = 1, per_page = 20) => {
+export const getThreads = async (page = 1, per_page = 20, extraParams = {}) => {
     try {
         // Use Better Messages API - this is what the web portal uses
         console.log('Fetching threads from Better Messages API');
@@ -8,12 +8,15 @@ export const getThreads = async (page = 1, per_page = 20) => {
             params: {
                 page,
                 per_page,
+                ...extraParams
             },
         });
         console.log('Better Messages response threads count:', response.data?.threads?.length || 0);
         return response.data;
     } catch (error) {
-        console.error('Error fetching Better Messages threads:', error.response?.data || error.message);
+        if (error.response?.status !== 401) {
+            console.error('Error fetching Better Messages threads:', error.response?.data || error.message);
+        }
         throw error;
     }
 };
@@ -153,5 +156,33 @@ export const markThreadAsRead = async (threadId) => {
         console.log(`Mark as read failed for /sk/v1/thread/${threadId}/read:`, error.response?.status);
         // Silent fail as this is not critical for UI flow
         return null;
+    }
+}
+
+export const allowChat = async (userId, action = 'allow') => {
+    try {
+        const response = await client.post('/sk/v1/allow-chat', {
+            user_id: userId,
+            action: action
+        });
+        return response.data;
+    } catch (error) {
+        console.error('Allow chat failed:', error.response?.data || error.message);
+        throw error;
+    }
+}
+
+export const getUnreadCount = async (clearAll = false) => {
+    try {
+        const params = { _cb: Date.now() };
+        if (clearAll) params.clear_all = 1;
+
+        const response = await client.get('/sk/v1/unread-count', {
+            params: params
+        });
+        return response.data;
+    } catch (error) {
+        console.error('Get unread count failed:', error.response?.data || error.message);
+        return { unread_count: 0 };
     }
 }

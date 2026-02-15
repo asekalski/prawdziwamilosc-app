@@ -2,7 +2,7 @@ import React, { useState, useEffect, useContext, useRef } from 'react';
 import { View, Text, FlatList, StyleSheet, TextInput, ActivityIndicator, Image, TouchableOpacity, Dimensions, Alert, SafeAreaView, ScrollView, Modal, Animated, PanResponder, RefreshControl } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getMembers, getXProfileGroups, getMember, toggleLike, getLikedUsers, getLikesMeUsers, getMatches } from '../api/members';
-import { addSkippedUser, getSkippedUsers, removeSkippedUser, getSkippedUserIds } from '../api/skipped';
+import { addSkippedUser, getSkippedUsers, removeSkippedUser, getSkippedUserIds, syncSkippedWithServer } from '../api/skipped';
 import { getSuperMessageStatus } from '../api/superMessages';
 import { useNavigation, useFocusEffect, useScrollToTop } from '@react-navigation/native';
 import { useTheme } from '@react-navigation/native';
@@ -87,15 +87,15 @@ const mapUserProfile = (user) => {
         work: stripHtml(getVal(356, 'styl pracy', 'praca')),
         diet: stripHtml(getVal(362, 'styl jedzenia', 'dieta')),
         zodiac_sign: stripHtml(getVal(303, 'znak zodiaku', 'zodiak')),
-        age: user.age || calculateAge(getVal(107, 'data urodzenia', 'wiek', 'birthdate')),
+        age: user.hide_age ? null : (user.age || calculateAge(getVal(107, 'data urodzenia', 'wiek', 'birthdate'))),
         gender: getVal(129, 'płeć', 'gender')
     };
 };
 
 const TABS = [
     { id: 'search', label: 'Wyszukaj' },
-    { id: 'liked', label: 'Polubieni', hasPremiumBadge: true },
-    { id: 'likesMe', label: 'Lubią Mnie', hasPremiumBadge: true },
+    { id: 'liked', label: 'Polubieni' },
+    { id: 'likesMe', label: 'Lubią Mnie' },
     { id: 'matches', label: 'Matche' },
     { id: 'skipped', label: 'Usunięci' },
 ];
@@ -404,12 +404,15 @@ const MembersScreen = ({ route }) => {
 
             // Filter out already liked users from search results
             const likedData = await getLikedUsers();
-            const likedIds = new Set((likedData || []).map(u => u.id));
+            const likedIds = new Set((likedData || []).map(u => String(u.id)));
 
             // Filter out skipped users
-            const skippedIds = await getSkippedUserIds();
+            const skippedIds = (await getSkippedUserIds()).map(id => String(id));
 
-            data = (data || []).filter(member => !likedIds.has(member.id) && !skippedIds.includes(member.id));
+            data = (data || []).filter(member => {
+                const mid = String(member.id);
+                return !likedIds.has(mid) && !skippedIds.includes(mid);
+            });
 
             // Enrich members with zodiac data in background
             data.forEach(async (member) => {
@@ -469,12 +472,15 @@ const MembersScreen = ({ route }) => {
                     data = await getMembers(1, 20, searchQuery, ageRange.min, ageRange.max, extendedFilters.faith, extendedFilters.politics, extendedFilters.work, extendedFilters.diet);
                     // Filter out already liked users from search results
                     const likedData = await getLikedUsers();
-                    const likedIds = new Set((likedData || []).map(u => u.id));
+                    const likedIds = new Set((likedData || []).map(u => String(u.id)));
 
                     // Filter out skipped users
-                    const skippedIds = await getSkippedUserIds();
+                    const skippedIds = (await getSkippedUserIds()).map(id => String(id));
 
-                    data = (data || []).filter(member => !likedIds.has(member.id) && !skippedIds.includes(member.id));
+                    data = (data || []).filter(member => {
+                        const mid = String(member.id);
+                        return !likedIds.has(mid) && !skippedIds.includes(mid);
+                    });
                     break;
                 case 'liked':
                     // Backend now returns full xprofile data, no need for additional getMember calls
@@ -484,18 +490,19 @@ const MembersScreen = ({ route }) => {
                 case 'likesMe':
                     {
                         const raw = await getLikesMeUsers();
-                        const skippedIds = await getSkippedUserIds();
-                        data = await fetchFullDetails((raw || []).filter(u => !skippedIds.includes(u.id)));
+                        const skippedIds = (await getSkippedUserIds()).map(id => String(id));
+                        data = await fetchFullDetails((raw || []).filter(u => !skippedIds.includes(String(u.id))));
                     }
                     break;
                 case 'matches':
                     {
                         const raw = await getMatches();
-                        const skippedIds = await getSkippedUserIds();
-                        data = await fetchFullDetails((raw || []).filter(u => !skippedIds.includes(u.id)));
+                        const skippedIds = (await getSkippedUserIds()).map(id => String(id));
+                        data = await fetchFullDetails((raw || []).filter(u => !skippedIds.includes(String(u.id))));
                     }
                     break;
                 case 'skipped':
+                    await syncSkippedWithServer();
                     data = await fetchFullDetails(await getSkippedUsers());
                     break;
                 default:
@@ -783,7 +790,7 @@ const MembersScreen = ({ route }) => {
         // Use clean mapped values if available, otherwise try to extract using IDs (fallback)
         // IDs: Zodiac 303, Bio 367, Faith 346, Politics 351, Work 356, Diet 362
         const zodiac = item.zodiac_sign || item.zodiac || zodiacCache[item.id] || getField(item, 303);
-        const age = item.age || calculateAge(getField(item, 107));
+        const age = item.hide_age ? null : (item.age || calculateAge(getField(item, 107)));
         const zodiacIcon = getZodiacIcon(zodiac);
         const imageUrl = item.hires_avatar?.large || item.hires_avatar?.full || item.avatar_urls?.full;
         const anim = cardAnimations[item.id] || { translateX: new Animated.Value(0), opacity: new Animated.Value(1) };
@@ -1056,7 +1063,7 @@ const MembersScreen = ({ route }) => {
                         }}
                     >
                         <Ionicons name="mail" size={20} color="#FFD700" />
-                        <Text style={styles.superMessagePremiumLabel}>Premium</Text>
+                        <Text style={styles.superMessagePremiumLabel}>SuperMSG</Text>
                     </TouchableOpacity>
                 </View>
             </Animated.View>
@@ -1123,12 +1130,14 @@ const MembersScreen = ({ route }) => {
     };
 
     return (
-        <View style={[styles.container, { paddingTop: insets.top }]}>
-            <View style={styles.header}>
+        <View style={styles.container}>
+            <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
                 <TouchableOpacity style={styles.headerButton} onPress={() => setShowFiltersModal(true)}>
                     <Ionicons name="options-outline" size={24} color="#FFFFFF" />
                 </TouchableOpacity>
-                <View style={{ flex: 1 }} />
+                <View style={{ flex: 1, alignItems: 'center' }}>
+                    <Text style={styles.headerTitle}>Prawdziwa Miłość</Text>
+                </View>
                 <TouchableOpacity style={styles.headerButton} onPress={() => navigation.navigate('Notifications')}>
                     <Ionicons name="notifications-outline" size={24} color="#FFFFFF" />
                     {unreadNotifications > 0 && <View style={styles.notificationDot} />}
@@ -1185,9 +1194,6 @@ const MembersScreen = ({ route }) => {
                             ]}>
                                 {tab.label}
                             </Text>
-                            {tab.hasPremiumBadge && (
-                                <Text style={styles.premiumBadgeText}>PREMIUM</Text>
-                            )}
                             {activeTab === tab.id && <View style={styles.tabIndicator} />}
                         </TouchableOpacity>
                     ))}
@@ -1508,6 +1514,13 @@ const styles = StyleSheet.create({
     },
     header: { flexDirection: 'row', paddingHorizontal: 20, paddingBottom: 10, alignItems: 'center' },
     headerButton: { padding: 10, backgroundColor: '#3A3A3C', borderRadius: 15, marginRight: 10 }, // Darker grey for buttons
+    headerTitle: {
+        fontSize: 22,
+        fontWeight: 'bold',
+        fontFamily: 'serif',
+        color: '#FFFFFF',
+        letterSpacing: 1,
+    },
     avatarContainer: {
         position: 'relative',
     },
@@ -1794,7 +1807,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: 6, // Reduced from 8
         justifyContent: 'center', // Changed from flex-end to center to avoid pushing
-        // Removed paddingRight to reduce gap to Premium button
+        // Removed paddingRight to reduce gap to SuperMSG button
     },
     restoreButtonPill: {
         flexDirection: 'row',
