@@ -9,7 +9,7 @@ import client from '../api/client';
 
 const ChatScreen = ({ route }) => {
     // 0. Resolve users and participants
-    const { threadId, allMessages = [], users: initialUsers = {}, title, participantId, participantAvatar: initialAvatar } = route.params;
+    const { threadId, allMessages = [], users: initialUsers = {}, title, participantId: initialParticipantId, participantAvatar: initialAvatar } = route.params;
     const { userInfo, refreshUnreadCount, markThreadReadLocally, setActiveThreadId } = useContext(AuthContext);
     const navigation = useNavigation();
     const insets = useSafeAreaInsets();
@@ -20,6 +20,10 @@ const ChatScreen = ({ route }) => {
     const currentUserId = userInfo?.id;
 
     // Improved participant resolution
+    // If we have no users map (deep link), we can't find the participant yet.
+    const participantId = initialParticipantId || (Object.keys(users).length > 0 ? Object.values(users).find(u => String(u.user_id || u.id) !== String(currentUserId))?.user_id : null);
+
+    // Fallback if we still don't have a participant check against route params or wait for fetch
     const participant = participantId ? users[participantId] : Object.values(users).find(u => String(u.user_id || u.id) !== String(currentUserId));
 
     // Helper to strip HTML and sanitize status
@@ -76,13 +80,18 @@ const ChatScreen = ({ route }) => {
 
     // 1. Initial Load
     useEffect(() => {
-        let threadMessages = allMessages.filter(msg =>
-            parseInt(msg.thread_id) === parseInt(threadId)
-        );
-        // Sort DESC (Newest first) for Inverted List
-        threadMessages.sort((a, b) => parseDate(b) - parseDate(a));
-        setMessages(threadMessages);
-        setLoading(false);
+        if (allMessages && allMessages.length > 0) {
+            let threadMessages = allMessages.filter(msg =>
+                parseInt(msg.thread_id) === parseInt(threadId)
+            );
+            // Sort DESC (Newest first) for Inverted List
+            threadMessages.sort((a, b) => parseDate(b) - parseDate(a));
+            setMessages(threadMessages);
+            setLoading(false);
+        } else {
+            // Deep link case: No messages yet, keep loading true
+            setLoading(true);
+        }
 
         // Mark as read on enter - OPTIMISTICALLY
         if (markThreadReadLocally) {
@@ -92,8 +101,39 @@ const ChatScreen = ({ route }) => {
         markThreadAsRead(threadId).catch(err => console.log('markRead failed', err));
 
         // Fetch full participant details for activity status & up-to-date info
+        // ALSO: If this is a deep link (no users loaded), we MUST fetch the thread details here.
         const fetchParticipantDetails = async () => {
-            const targetId = participantId || participant?.user_id || participant?.id;
+            let targetId = participantId || participant?.user_id || participant?.id;
+
+            // Deep Link Handling: If we have no targetId, we need to fetch the thread metadata first
+            if (!targetId && (!users || Object.keys(users).length === 0)) {
+                try {
+                    console.log('Deep link detected, fetching thread details for:', threadId);
+                    const { getThread } = await import('../api/messages');
+                    const threadData = await getThread(threadId);
+
+                    if (threadData && threadData.recipients) {
+                        // Find the other person
+                        const otherPerson = threadData.recipients.find(r => String(r.user_id) !== String(currentUserId));
+                        if (otherPerson) {
+                            targetId = otherPerson.user_id;
+
+                            // Initialize users map with this basic info so the UI can render
+                            setUsers(prev => ({
+                                ...prev,
+                                [targetId]: {
+                                    user_id: targetId,
+                                    name: otherPerson.name,
+                                    avatar: otherPerson.avatar
+                                }
+                            }));
+                        }
+                    }
+                } catch (e) {
+                    console.log('Error processing deep link:', e);
+                }
+            }
+
             if (!targetId) return;
 
             try {
@@ -111,6 +151,37 @@ const ChatScreen = ({ route }) => {
                 }
             } catch (error) {
                 console.log('Error fetching participant details in Chat:', error);
+            }
+            // 2. Fetch messages if missing (Deep Link)
+            if (!allMessages || allMessages.length === 0) {
+                try {
+                    const { getThreads } = await import('../api/messages');
+                    // Fetch recent threads to find our messages
+                    // Note: This is a bit heavy, ideally we'd have getMessages(threadId)
+                    // But for now we reuse the existing polling logic style or just trigger the poll immediately
+
+                    // Actually, let's just trigger the poll immediately by calling the function
+                    // But we can't easily call the effect function.
+                    // So we will just trust the polling effect to run? 
+                    // No, polling has a 5s delay often.
+
+                    const threadsData = await getThreads(1, 50);
+                    if (threadsData?.messages) {
+                        const incomingMessages = threadsData.messages.filter(msg =>
+                            parseInt(msg.thread_id) === parseInt(threadId)
+                        );
+                        if (incomingMessages.length > 0) {
+                            incomingMessages.sort((a, b) => parseDate(b) - parseDate(a));
+                            setMessages(incomingMessages);
+                        }
+                    }
+                } catch (e) {
+                    console.log('Error fetching initial messages for deep link:', e);
+                } finally {
+                    setLoading(false);
+                }
+            } else {
+                setLoading(false);
             }
         };
         fetchParticipantDetails();
@@ -274,6 +345,23 @@ const ChatScreen = ({ route }) => {
 
         const interval = setInterval(fetchFreshMessages, 5000);
         return () => clearInterval(interval);
+    }, [threadId]);
+
+    // 4. Presence Tracking (Suppress Notifications)
+    useEffect(() => {
+        if (!threadId) return;
+
+        // Enter: I am now looking at this thread
+        client.post('/sk/v1/presence/update', { thread_id: threadId })
+            .catch(err => {
+                console.log('Presence update error:', err);
+            });
+
+        return () => {
+            // Leave: I am no longer looking at this thread
+            client.post('/sk/v1/presence/update', { thread_id: 0 })
+                .catch(err => console.log('Presence clear error:', err));
+        };
     }, [threadId]);
 
     // 3. Simple Send Logic

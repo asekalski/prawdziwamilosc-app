@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useContext, useRef } from 'react';
 import { View, FlatList, StyleSheet, TouchableOpacity, Text, ActivityIndicator, Image, ScrollView, Alert, Animated, RefreshControl } from 'react-native';
 import { getThreads, deleteThread } from '../api/messages';
-import { addSkippedUser, getSkippedUserIds } from '../api/skipped';
+import { addSkippedUser, getSkippedUserIds, addLocalSkippedUser } from '../api/skipped';
 import { getMatches } from '../api/members';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -196,7 +196,7 @@ const MessagesScreen = () => {
     const handleDelete = (threadId, participantId) => {
         Alert.alert(
             "Usuń konwersację",
-            "Czy na pewno chcesz usunąć tę konwersację? Tej operacji nie można cofnąć.",
+            "Czy na pewno chcesz usunąć tę konwersację? Wiadomości zostaną trwale usunięte, a użytkownik trafi do zakładki 'Usunięci'. Będziesz mógł go stamtąd przywrócić, ale historia czatu nie zostanie odzyskana.",
             [
                 { text: "Anuluj", style: "cancel" },
                 {
@@ -210,6 +210,13 @@ const MessagesScreen = () => {
                         try {
                             console.log(`Deleting thread ${threadId}...`);
                             await deleteThread(threadId);
+
+                            // NEW: Add participant to local skipped list immediately so they appear in Deleted tab
+                            if (participantId) {
+                                console.log(`Adding user ${participantId} to local skipped list...`);
+                                await addLocalSkippedUser(participantId);
+                            }
+
                             console.log(`Thread ${threadId} deleted successfully on backend.`);
 
                             // Fully refresh everything to ensure states are synced

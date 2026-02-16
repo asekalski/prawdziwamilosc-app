@@ -121,3 +121,16 @@ export const likeSkippedUser = async (userId) => {
         throw error;
     }
 };
+
+// Add to local storage ONLY (for cases where backend update is handled elsewhere, e.g., thread deletion)
+export const addLocalSkippedUser = async (userId) => {
+    try {
+        const skipped = await getSkippedUserIds();
+        if (!skipped.includes(userId)) {
+            skipped.push(userId);
+            await AsyncStorage.setItem(SKIPPED_USERS_KEY, JSON.stringify(skipped));
+        }
+    } catch (e) {
+        console.error('Failed to add local skipped user:', e);
+    }
+};

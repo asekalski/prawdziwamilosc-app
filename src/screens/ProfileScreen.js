@@ -519,13 +519,12 @@ const ProfileScreen = ({ route }) => {
 
         try {
             setMessageLoading(true);
-            const action = member.chat_allowed_by_me ? 'revoke' : 'allow';
+            const action = 'allow'; // No longer revoking from UI
 
             // Optimistic update
-            const oldState = member.chat_allowed_by_me;
             setMember(prev => ({
                 ...prev,
-                chat_allowed_by_me: !prev.chat_allowed_by_me
+                chat_allowed_by_me: true
             }));
 
             const result = await allowChat(member.id, action);
@@ -534,7 +533,7 @@ const ProfileScreen = ({ route }) => {
                 // Revert if failed
                 setMember(prev => ({
                     ...prev,
-                    chat_allowed_by_me: oldState
+                    chat_allowed_by_me: false
                 }));
                 Alert.alert('Błąd', 'Nie udało się zmienić uprawnień rozmowy.');
             } else {
@@ -547,11 +546,7 @@ const ProfileScreen = ({ route }) => {
                 }
 
                 // Show correct message
-                if (action === 'revoke') {
-                    Alert.alert('Sukces', 'Cofnięto pozwolenie na rozmowę.');
-                } else {
-                    Alert.alert('Sukces', `Pozwoliłaś użytkownikowi ${member.name} na rozmowę.`);
-                }
+                Alert.alert('Sukces', `Pozwoliłaś użytkownikowi ${member.name} na rozmowę.`);
             }
         } catch (error) {
             console.log('Error allowing/revoking chat:', error);
@@ -760,25 +755,25 @@ const ProfileScreen = ({ route }) => {
                                 member.chat_allowed_by_me && styles.allowChatButtonHeaderEnabled
                             ]}
                             onPress={handleAllowChat}
-                            disabled={messageLoading}
+                            disabled={messageLoading || member.chat_allowed_by_me}
                         >
                             {messageLoading ? (
-                                <ActivityIndicator size="small" color={member.chat_allowed_by_me ? "#FF3B30" : "#2ECC71"} style={styles.messageIcon} />
+                                <ActivityIndicator size="small" color={member.chat_allowed_by_me ? "#2ECC71" : "#808000"} style={styles.messageIcon} />
                             ) : (
                                 <View style={styles.iconContainer}>
                                     <Ionicons
-                                        name={member.chat_allowed_by_me ? "close-circle" : "chatbubble-ellipses-outline"}
+                                        name={member.chat_allowed_by_me ? "checkmark-circle" : "chatbubble-ellipses-outline"}
                                         size={24}
-                                        color={member.chat_allowed_by_me ? "#FF3B30" : "#808000"}
+                                        color={member.chat_allowed_by_me ? "#2ECC71" : "#808000"}
                                         style={styles.messageIcon}
                                     />
                                 </View>
                             )}
                             <Text style={[
                                 styles.allowChatButtonTextHeader,
-                                member.chat_allowed_by_me && { color: '#FF3B30' }
+                                member.chat_allowed_by_me && { color: '#2ECC71' }
                             ]}>
-                                {member.chat_allowed_by_me ? 'Cofnij pozwolenie' : 'Pozwól porozmawiać'}
+                                {member.chat_allowed_by_me ? 'Wysłano pozwolenie na rozmowę' : 'Pozwól porozmawiać'}
                             </Text>
                         </TouchableOpacity>
                     )}

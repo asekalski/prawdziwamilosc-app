@@ -354,17 +354,20 @@ export const AuthProvider = ({ children }) => {
             });
 
             // 4. Calculate Final Badge Count
-            // We TRUST the server's total count (which now includes BP, BM, and SQL on the backend).
-            // We only adjust it based on our local "recently read" mask for immediate UI feedback.
-            let finalBadgeCount = serverTotalCount;
+            // CRITICAL FIX: We prioritize the count of verified thread IDs.
+            // If the server provides IDs, we use the filtered length.
+            // If the server provides NO IDs, we set the count to 0 to prevent "ghost badges".
+            let finalBadgeCount = (serverUnreadIds.length > 0) ? filteredServerIds.length : 0;
 
             // If we have local masks, and the server still thinks those threads are unread, subtract them.
-            // This handles the latency between marking a thread read and the next poll.
-            locallyReadThreadIds.current.forEach(maskedId => {
-                if (serverUnreadIds.includes(parseInt(maskedId)) || serverUnreadIds.includes(maskedId.toString())) {
-                    finalBadgeCount = Math.max(0, finalBadgeCount - 1);
-                }
-            });
+            // (This is mostly redundant if we use filteredServerIds.length, but kept for safety if logic changes)
+            if (serverUnreadIds.length > 0) {
+                locallyReadThreadIds.current.forEach(maskedId => {
+                    if (serverUnreadIds.includes(parseInt(maskedId)) || serverUnreadIds.includes(maskedId.toString())) {
+                        // Already handled by filteredServerIds.length above if used
+                    }
+                });
+            }
 
             // --- VERBOSE LOGGING FOR FLICKER DEBUG ---
             const timestamp = new Date().toLocaleTimeString();
@@ -453,7 +456,7 @@ export const AuthProvider = ({ children }) => {
         <AuthContext.Provider value={{
             login, logout, deleteAccount, isLoading,
             userToken, userInfo, setUserInfo, updateUserInfo,
-            unreadMessagesCount, refreshUnreadCount, markThreadReadLocally,
+            unreadMessagesCount, refreshUnreadCount, resetUnreadCount, markThreadReadLocally,
             activeThreadId, setActiveThreadId
         }}>
             {children}
